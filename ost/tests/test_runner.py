@@ -320,6 +320,32 @@ def test_file_access_denied(command, message):
     assert line == 1 and actual.startswith("database error: " + message), actual
 
 
+def test_execute_expand_database_error_fails():
+    # If the expansion succeeds but executing it raises a database error,
+    # the output is the expansion and the error, and the script fails.
+    text = (
+        'connect("scott");\n'
+        'modelInline("m", {_|\n'
+        "version: 0.3.0.dev0\n"
+        "name: m\n"
+        "datasets:\n"
+        "  - name: staff\n"
+        "    source: scott.emp\n"
+        "    metrics:\n"
+        "      - name: sum_sal\n"
+        "        expression:\n"
+        "          {dialects: [{dialect: OSSIE_SQL_2026, expression: SUM(sal)}]}\n"
+        "|_});\n"
+        "executeExpand(select agg(sum_sal) from m.staff where nope = 1);\n"
+    )
+    result = run(text)
+    assert "> {_|\nSELECT\n  SUM(sal)\n" in result.output
+    assert "> error: Binder Error: Referenced column" in result.output
+    [(line, message)] = result.fatal_errors
+    assert line == 13 and message.startswith("database error: Binder Error")
+    assert not run(result.output).passed
+
+
 def test_custom_function():
     functions = {"twice": Function((Kind.STRING,), lambda session, s: s + s)}
     result = run('twice("ab");\n', functions=functions)
