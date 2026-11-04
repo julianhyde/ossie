@@ -177,6 +177,78 @@ FROM (
 WHERE
   s > 9000
 |_} : string
+
+# A subquery or CTE that does not evaluate a measure passes it through,
+# projecting instead the columns that its expression needs. "*" passes
+# every measure through. If the subquery uses a column's name for
+# something else, the column is projected under a new name.
+expand(select agg(s) from (select deptno, sum_sal as s from m.staff where deptno > 10));
+> {_|
+SELECT
+  SUM(sal)
+FROM (
+  SELECT
+    deptno,
+    sal
+  FROM scott.emp AS staff
+  WHERE
+    deptno > 10
+)
+|_} : string
+expand(select agg(s.sum_sal) from (select * from m.staff) as s);
+> {_|
+SELECT
+  SUM(sal)
+FROM (
+  SELECT
+    *
+  FROM scott.emp AS staff
+) AS s
+|_} : string
+expand(select agg(sum_sal) from (select deptno * 2 as sal, sum_sal from m.staff));
+> {_|
+SELECT
+  SUM("sum_sal$sal")
+FROM (
+  SELECT
+    deptno * 2 AS sal,
+    sal AS "sum_sal$sal"
+  FROM scott.emp AS staff
+)
+|_} : string
+expand(with t as (select ansi_count as c from m.staff) select agg(c) from t);
+> {_|
+WITH t AS (
+  SELECT
+    *
+  FROM scott.emp AS staff
+)
+SELECT
+  COUNT(*)
+FROM t
+|_} : string
+expand(select agg(t.c) from (select s.sum_sal as c from m.staff as s) as t);
+> {_|
+SELECT
+  SUM(sal)
+FROM (
+  SELECT
+    sal
+  FROM scott.emp AS s
+) AS t
+|_} : string
+expand(select agg(sum_sal) from (select mdx_count, sum_sal from m.staff));
+> {_|
+SELECT
+  SUM(sal)
+FROM (
+  SELECT
+    sal
+  FROM scott.emp AS staff
+)
+|_} : string
+expand(select agg(mdx_count) from (select mdx_count from m.staff));
+> error: no expression in dialect OSSIE_SQL_2026 or ANSI_SQL
 expand(select * from v);
 > {_|
 SELECT
@@ -189,6 +261,20 @@ FROM (
   WHERE
     job = 'CLERK'
 ) AS v
+|_} : string
+# The expansion keeps NULLS FIRST and NULLS LAST, even where they are the
+# default in DuckDB, because they might not be in another database.
+expand(select deptno, agg(sum_sal) from m.staff group by 1 order by 1 nulls last, 2 desc nulls first);
+> {_|
+SELECT
+  deptno,
+  SUM(sal)
+FROM scott.emp AS staff
+GROUP BY
+  1
+ORDER BY
+  1 NULLS LAST,
+  2 DESC NULLS FIRST
 |_} : string
 expand(select 1);
 > {_|
