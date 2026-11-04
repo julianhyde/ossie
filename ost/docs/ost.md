@@ -229,6 +229,11 @@ row count that ends a table). It is one of:
 * A value, if a function returns a value.
 * An error, if the command fails.
 
+A function may have several outputs, one after another; for example,
+`executeExpand` has a value and then a table. Each part of the
+expected output must match the corresponding part of the actual
+output.
+
 If the lines after a command contain more than one table, value or
 error, the expected output does not match, and the regenerated
 script contains only the actual output. An output line that does
@@ -302,7 +307,10 @@ A cell is written as follows:
 * A double is written as the shortest decimal that converts back to
   the same double, in the format of Python's `repr`: `0.1`,
   `0.30000000000000004`, `1e+16`, `1e-07`, `-0.0`, `inf`, `-inf`,
-  `nan`.
+  `nan`. If the `doubleDigits` property (see `set`) is *n*, where
+  *n* is 0 or more, a finite double is instead written rounded to
+  exactly *n* digits after the point, with halves rounded away from
+  zero, as SQL's `ROUND` does: `2073.21`, `5.00`, `0.00`.
 * A real (32-bit) is written the same way, but as the shortest
   decimal that converts back to the same real. So `0.1::REAL` is
   `0.1`, not `0.10000000149011612`.
@@ -467,6 +475,57 @@ shows only the rows that changed.
     both `emp` and `scott.emp` work.
 
   Each script starts as if it began with `connect("empty")`.
+  `connect` also forgets the models and views that the script has
+  defined.
+
+`createView(name, sql)`
+: Defines a view *name* whose query is *sql*. The query may define
+  measures, using `TO MEASURE AS`. A query that reads the view is
+  expanded before it is executed (see `expand`).
+
+`expand(sql)`
+: Returns the expansion of the query *sql*: an equivalent query
+  without measures, over the tables beneath the models and views
+  that *sql* reads. A query that reads a model or a view is expanded
+  before it is executed; other queries are executed as written.
+
+  The view expander replaces each view with its query, as a
+  subquery. It replaces each relation of a model with its dataset's
+  source, and each `AGG(m)`, or its synonym `MEASURE(m)`, with the
+  expression of metric *m* (in dialect `OSSIE_SQL_2026` or, failing
+  that, `ANSI_SQL`). It does not support joins of a relation of a
+  model, nor fields whose expression is other than their name, yet.
+
+`executeExpand(sql)`
+: Expands the query *sql*, as `expand` does, and executes the
+  expansion. The output has two parts: the expansion, as a string,
+  followed by the result of executing it (rows, or an error). If the
+  expansion fails, the output is just the error. The rows are
+  ordered if *sql* contains `order by` (see `query`). For example:
+
+  ```
+  executeExpand(
+    SELECT AGG(sum_sal) AS sum_sal
+    FROM scott_model.emp);
+  > {_|
+  SELECT
+    SUM(sal) AS sum_sal
+  FROM scott.emp
+  |_} : string
+  +----------+
+  | sum_sal  |
+  +----------+
+  | 29025.00 |
+  +----------+
+  (1 row)
+  ```
+
+`modelInline(name, yaml)`
+: Defines a model *name* from *yaml*, an Ossie semantic model in
+  YAML, typically written as a raw string. The model's `name` must
+  be *name*. Each dataset of the model is a relation in schema
+  *name*, so a query can read dataset `emp` of model `scott_model`
+  as `scott_model.emp`.
 
 `query(sql)`
 : Executes *sql*; equivalent to writing *sql* as a SQL command. The
@@ -491,10 +550,13 @@ shows only the rows that changed.
 
 `set(name, value)`
 : Sets the property *name* to *value*, for the rest of the script.
-  The only property is `"matchStrict"` (default `false`): if `true`,
-  the actual output matches the expected output only if they are
-  identical, character for character. Use it to test the layout of
-  output.
+  *value* is a literal of the property's type. The properties are:
+  * `"matchStrict"` (boolean, default `false`): if `true`, the actual
+    output matches the expected output only if they are identical,
+    character for character. Use it to test the layout of output.
+  * `"doubleDigits"` (integer, default `-1`): if 0 or more, the
+    number of digits after the point of each double in a table (see
+    *Types*); if negative, a double is written in full.
 
 `ost(script)`
 : Runs *script*, a string, as a separate script, with its own
