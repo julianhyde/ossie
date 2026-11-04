@@ -39,6 +39,38 @@ plus(1, 2);
 set("matchStrict", false);
 set("noSuchProperty", true);
 > error: ost: unknown property "noSuchProperty"
+set("matchStrict", 1);
+> error: ost: property "matchStrict" must be bool
+
+# doubleDigits rounds doubles, rounding halves away from zero. It does
+# not affect decimals or reals.
+set("doubleDigits", 2);
+select 2073.214285714286::double as d, 5::double as i, -0.001::double as z,
+  'inf'::double as inf, null::double as n, 0.125::decimal(5, 3) as dec,
+  0.1::real as r;
++---------+------+------+-----+---+-------+-----+
+| d       | i    | z    | inf | n | dec   | r   |
++---------+------+------+-----+---+-------+-----+
+| 2073.21 | 5.00 | 0.00 | inf |   | 0.125 | 0.1 |
++---------+------+------+-----+---+-------+-----+
+set("doubleDigits", 0);
+select 2.5::double as d;
++---+
+| d |
++---+
+| 3 |
++---+
+set("doubleDigits", -1);
+select 2073.214285714286::double as d;
++-------------------+
+| d                 |
++-------------------+
+| 2073.214285714286 |
++-------------------+
+set("doubleDigits", true);
+> error: ost: property "doubleDigits" must be int
+set("doubleDigits", 1.5);
+> error: ost: property "doubleDigits" must be int
 
 # ost runs a script, and returns the regenerated script.
 ost({|plus(1, 2);
@@ -49,5 +81,181 @@ ost({|plus(1, 2);
 ost({|select (1;
 |});
 > error: <string>:1:1: unterminated command (open '(' at 1:8)
+
+# modelInline defines a model, whose datasets are relations in a schema
+# with the name of the model.
+modelInline("m", {_|
+version: 0.2.0.dev0
+name: m
+datasets:
+  - name: staff
+    source: scott.emp
+    metrics:
+      - name: sum_sal
+        expression: {dialects: [{dialect: OSSIE_SQL_2026, expression: SUM(sal)}]}
+      - name: ansi_count
+        expression: {dialects: [{dialect: ANSI_SQL, expression: COUNT(*)}]}
+      - name: mdx_count
+        expression: {dialects: [{dialect: MDX, expression: "[Measures].[Count]"}]}
+|_});
+modelInline("m2", {_|
+version: 0.2.0.dev0
+name: m
+datasets:
+  - name: emp
+    source: scott.emp
+|_});
+> error: model is named 'm', not 'm2'
+modelInline("m", {_|
+name: m
+|_});
+> error: document is missing the required property: version
+
+# createView defines a view.
+createView("v", select deptno, sal from scott.emp where job = 'CLERK');
+
+# A query that reads a model or a view is expanded before it is
+# executed; others are not.
+select deptno, agg(sum_sal) as s, measure(ansi_count) as c
+from m.staff
+group by deptno;
++--------+----------+---+
+| deptno | s        | c |
++--------+----------+---+
+|     10 |  8750.00 | 3 |
+|     20 | 10875.00 | 5 |
+|     30 |  9400.00 | 6 |
++--------+----------+---+
+select count(*) as c from v;
++---+
+| c |
++---+
+| 4 |
++---+
+select count(*) as c from scott.emp;
++----+
+| c  |
++----+
+| 14 |
++----+
+
+# expand returns the expansion of a query. A relation becomes its
+# dataset's source, aliased as the dataset unless the query gives an
+# alias, and AGG(m) or MEASURE(m) becomes the expression of metric m.
+expand(select deptno, agg(sum_sal) as s from m.staff where job <> 'CLERK' group by deptno);
+> {_|
+SELECT
+  deptno,
+  SUM(sal) AS s
+FROM scott.emp AS staff
+WHERE
+  job <> 'CLERK'
+GROUP BY
+  deptno
+|_} : string
+expand(select s.deptno, agg(s.sum_sal) from m.staff as s group by 1);
+> {_|
+SELECT
+  s.deptno,
+  SUM(sal)
+FROM scott.emp AS s
+GROUP BY
+  1
+|_} : string
+expand(select * from (select deptno, agg(sum_sal) as s from m.staff group by deptno) where s > 9000);
+> {_|
+SELECT
+  *
+FROM (
+  SELECT
+    deptno,
+    SUM(sal) AS s
+  FROM scott.emp AS staff
+  GROUP BY
+    deptno
+)
+WHERE
+  s > 9000
+|_} : string
+expand(select * from v);
+> {_|
+SELECT
+  *
+FROM (
+  SELECT
+    deptno,
+    sal
+  FROM scott.emp
+  WHERE
+    job = 'CLERK'
+) AS v
+|_} : string
+expand(select 1);
+> {_|
+SELECT
+  1
+|_} : string
+
+# executeExpand expands a query, and executes the expansion. Its output
+# is the expansion, as for expand, followed by the result. As for any
+# table, the rows of the result may be in any order unless the query has
+# ORDER BY.
+executeExpand(
+  select deptno, agg(sum_sal) as s
+  from m.staff
+  group by deptno);
+> {_|
+SELECT
+  deptno,
+  SUM(sal) AS s
+FROM scott.emp AS staff
+GROUP BY
+  deptno
+|_} : string
++--------+----------+
+| deptno | s        |
++--------+----------+
+|     30 |  9400.00 |
+|     10 |  8750.00 |
+|     20 | 10875.00 |
++--------+----------+
+executeExpand(select 1 as c);
+> {_|
+SELECT
+  1 AS c
+|_} : string
++---+
+| c |
++---+
+| 1 |
++---+
+
+# If the expansion fails, the output is the error.
+executeExpand(select agg(nope) from m.staff);
+> error: unknown measure nope
+
+# Errors.
+expand(select agg(nope) from m.staff);
+> error: unknown measure nope
+expand(select agg(sum_sal) from m.staff, scott.dept);
+> error: view expander does not support joins yet
+expand(select agg(mdx_count) from m.staff);
+> error: no expression in dialect OSSIE_SQL_2026 or ANSI_SQL
+expand(select agg(sal) from scott.emp);
+> error: cannot evaluate AGG(sal)
+expand(select 1 +);
+> error: Required keyword: 'expression' missing for <class 'sqlglot.expressions.core.Add'>. Line 1, Col: 10.
+select agg(nope) from m.staff;
+> error: unknown measure nope
+
+# connect forgets the models and views, so a query on m.emp is not
+# expanded.
+connect("scott");
+expand(select * from m.emp);
+> {_|
+SELECT
+  *
+FROM m.emp
+|_} : string
 
 # End functions.ost

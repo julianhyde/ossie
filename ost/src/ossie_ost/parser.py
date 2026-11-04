@@ -365,6 +365,8 @@ class Kind(Enum):
     BOOLEAN = "boolean"
     STRING = "string"
     QUERY = "query"
+    # A literal of any of the above kinds except QUERY.
+    ANY = "any"
 
 
 def parse_args(text: str, kinds: list[Kind]) -> list[object]:
@@ -404,6 +406,17 @@ def _skip_space(text: str, i: int) -> int:
 
 
 def _parse_literal(text: str, i: int, kind: Kind) -> tuple[object, int]:
+    if kind is Kind.ANY:
+        if text.startswith('"', i) or RAW_OPEN.match(text, i):
+            kind = Kind.STRING
+        elif NAME.match(text, i):
+            kind = Kind.BOOLEAN
+        elif (m := INTEGER.match(text, i)) and not (
+            m.end() < len(text) and text[m.end()] in ".eE"
+        ):
+            kind = Kind.INT
+        else:
+            kind = Kind.FLOAT
     if kind is Kind.STRING:
         if text.startswith('"', i):
             value, end = json.JSONDecoder().raw_decode(text, i)
