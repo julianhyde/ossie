@@ -24,11 +24,15 @@ on:
     branches: [ "main" ]
     paths:
       - 'ost/**'
+      - 'compliance/query/**'
+      - 'python/**'
       - '.github/workflows/ost-ci.yml'
   pull_request:
     branches: [ "main" ]
     paths:
       - 'ost/**'
+      - 'compliance/query/**'
+      - 'python/**'
       - '.github/workflows/ost-ci.yml'
 
 permissions:
@@ -69,4 +73,4 @@ jobs:
       - name: Run .ost scripts
         working-directory: ost
         run: |
-          uv run ost tests/scripts
+          uv run ost tests/scripts ../compliance/query

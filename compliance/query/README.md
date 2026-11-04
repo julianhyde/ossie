@@ -180,10 +180,19 @@ Adding a case
 - Cases SHOULD NOT depend on other implementation-defined behavior. Document
   any such dependency in the header of `query.ossie.sql`.
 
-Future work
------------
+Running the cases with ost
+--------------------------
 
-The cases can move to the `.ost` test format
-([#501](https://github.com/apache/ossie/issues/501)) and use the view expander
-([#502](https://github.com/apache/ossie/issues/502)) to run Ossie queries
-directly.
+[`relational_semantics.ost`](relational_semantics.ost) is the same cases as an
+`.ost` script ([#501](https://github.com/apache/ossie/issues/501)). Each case
+has three parts: an Ossie query that uses `AGG()`, its expansion into an
+equivalent DuckDB query over the SCOTT tables, and the result of executing the
+expansion. The `ost` runner expands each Ossie query with the view expander
+([#502](https://github.com/apache/ossie/issues/502)), executes the expansion
+in DuckDB, and checks that the expansion and the result are as expected. To
+run it:
+
+```sh
+cd ost
+uv run ost ../compliance/query
+```
