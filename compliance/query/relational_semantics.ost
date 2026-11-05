@@ -52,6 +52,26 @@
 connect("scott");
 set("doubleDigits", 2);
 
+# PET is not part of SCOTT. Each pet has a unique name, an owner (a foreign
+# key to emp; TRAMP has none), a species and an age. Most employees have no
+# pet. JONES has two cats and a dog. SCOTT has one cat, TIGER. ADAMS has a
+# hamster, HAMMY. FORD and SCOTT have the same salary, as do FELIX and
+# STEALTH, and RUBY and SNOOPY.
+create table scott.pet (
+  pname varchar(10) not null primary key,
+  empno smallint references scott.emp (empno),
+  species varchar(7) not null,
+  age tinyint not null);
+insert into scott.pet values
+  ('SNOOPY', 7499, 'DOG', 7),
+  ('HAMMY',  7876, 'HAMSTER', 1),
+  ('FELIX',  7566, 'CAT', 5),
+  ('OREO',   7566, 'CAT', 2),
+  ('RUBY',   7566, 'DOG', 7),
+  ('STEALTH', 7902, 'CAT', 5),
+  ('TIGER',  7788, 'CAT', 3),
+  ('TRAMP',  null, 'DOG', 4);
+
 
 # ============================================================================
 # Model: Ossie semantic model over SCOTT
@@ -61,7 +81,8 @@ set("doubleDigits", 2);
 # measure column of that relation (spec Section 3.4). All relations of the
 # model are in one schema with the name of the model (spec Section 11.2). The
 # Ossie queries below refer to these relations by two-part name:
-# scott_model.emp, scott_model.dept, and scott_model.salgrade.
+# scott_model.emp, scott_model.dept, scott_model.salgrade, and
+# scott_model.pet.
 #
 # The primary_key of each dataset is the row identity of its measures (spec
 # Section 3.2).
@@ -168,6 +189,32 @@ datasets:
         datatype: Integer
         expression: {dialects: [{dialect: OSSIE_SQL_2026, expression: COUNT(*)}]}
 
+  - name: pet
+    source: scott.pet
+    primary_key: [pname]
+    fields:
+      - name: pname
+        datatype: String
+        expression: {dialects: [{dialect: OSSIE_SQL_2026, expression: pname}]}
+      - name: empno
+        datatype: Integer
+        expression: {dialects: [{dialect: OSSIE_SQL_2026, expression: empno}]}
+      - name: species
+        datatype: String
+        expression: {dialects: [{dialect: OSSIE_SQL_2026, expression: species}]}
+      - name: age
+        datatype: Integer
+        expression: {dialects: [{dialect: OSSIE_SQL_2026, expression: age}]}
+    metrics:
+      - name: pet_count
+        description: Number of pets
+        datatype: Integer
+        expression: {dialects: [{dialect: OSSIE_SQL_2026, expression: COUNT(*)}]}
+      - name: sum_age
+        description: Total age of pets
+        datatype: Integer
+        expression: {dialects: [{dialect: OSSIE_SQL_2026, expression: SUM(age)}]}
+
 relationships:
   - name: emp_to_dept
     from: emp
@@ -178,6 +225,11 @@ relationships:
     from: emp
     to: emp
     from_columns: [mgr]
+    to_columns: [empno]
+  - name: pet_to_owner
+    from: pet
+    to: emp
+    from_columns: [empno]
     to_columns: [empno]
 |_});
 
@@ -632,6 +684,8 @@ ORDER BY
 # B1-B3:   joins that repeat no row of the measure's source.
 # B4-B8:   joins that repeat rows: fan-out and many-to-many.
 # B9-B13:  one self-join query with each join type.
+#
+# Cases B5a, B8a and B9a to B13a join emp to pet.
 # B14-B17: one dept-emp query with inner and outer joins.
 # ============================================================================
 
@@ -1025,6 +1079,107 @@ ORDER BY
 +----------+-----------+----------+--------------+
 
 # ----------------------------------------------------------------------------
+# B5a. Fan-out: the owners' salary, by species of pet.
+# The join repeats each owner once for each of their pets of the species.
+# JONES has two cats, so the join repeats JONES in the CAT group, and
+# AGG(e.sum_sal) counts JONES's salary once. Naive SUM(e.sal) for CAT is
+# 11950. SUM(DISTINCT e.sal) is no remedy: it gives 5975, because FORD and
+# SCOTT have the same salary.
+# Spec: 7.6, 8.1, G2 (8.3)
+# ----------------------------------------------------------------------------
+executeExpand(
+  SELECT p.species,
+         AGG(e.emp_count) AS owners,
+         AGG(e.sum_sal) AS owners_sal,
+         AGG(p.pet_count) AS pets,
+         AGG(p.sum_age) AS sum_age
+  FROM scott_model.emp AS e
+  JOIN scott_model.pet AS p ON p.empno = e.empno
+  GROUP BY p.species
+  ORDER BY p.species);
+> {_|
+WITH joined AS (
+  SELECT
+    p.species AS species,
+    e.empno AS e_k,
+    e.sal AS e_sal,
+    p.pname AS p_k,
+    p.age AS p_age
+  FROM scott.emp AS e
+  JOIN scott.pet AS p
+    ON p.empno = e.empno
+), spine AS (
+  SELECT DISTINCT
+    species
+  FROM joined
+)
+SELECT
+  g.species,
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.e_k
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL AND j.species IS NOT DISTINCT FROM g.species
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS owners,
+  (
+    SELECT
+      SUM(x.sal)
+    FROM (
+      SELECT
+        ANY_VALUE(j.e_sal) AS sal
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL AND j.species IS NOT DISTINCT FROM g.species
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS owners_sal,
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.p_k
+      FROM joined AS j
+      WHERE
+        j.p_k IS NOT NULL AND j.species IS NOT DISTINCT FROM g.species
+      GROUP BY
+        j.p_k
+    ) AS x
+  ) AS pets,
+  (
+    SELECT
+      SUM(x.age)
+    FROM (
+      SELECT
+        ANY_VALUE(j.p_age) AS age
+      FROM joined AS j
+      WHERE
+        j.p_k IS NOT NULL AND j.species IS NOT DISTINCT FROM g.species
+      GROUP BY
+        j.p_k
+    ) AS x
+  ) AS sum_age
+FROM spine AS g
+ORDER BY
+  g.species
+|_} : string
++---------+--------+------------+------+---------+
+| species | owners | owners_sal | pets | sum_age |
++---------+--------+------------+------+---------+
+| CAT     |      3 |    8975.00 |    4 |      15 |
+| DOG     |      2 |    4575.00 |    2 |      14 |
+| HAMSTER |      1 |    1100.00 |    1 |       1 |
++---------+--------+------------+------+---------+
+
+# ----------------------------------------------------------------------------
 # B6. Fan-out through a range join.
 # The join condition can be any predicate over fields, not only an equality.
 # Each employee matches one salary grade, and a grade can match many
@@ -1257,6 +1412,105 @@ ORDER BY
 +--------+----------+------------+
 
 # ----------------------------------------------------------------------------
+# B8a. Many-to-many join: employees and their manager's pets.
+# Both sides repeat: JONES has three pets and two reports (FORD and SCOTT),
+# so the join repeats each of JONES's pets twice and each of FORD and SCOTT
+# three times. Naive SUM(e.sal) for CAT is 13900, naive COUNT(*) is 6, and
+# naive SUM(p.age) is 22.
+# Spec: 7.6, G2 (8.3)
+# ----------------------------------------------------------------------------
+executeExpand(
+  SELECT p.species,
+         AGG(e.emp_count) AS reports,
+         AGG(e.sum_sal) AS reports_sal,
+         AGG(p.pet_count) AS pets,
+         AGG(p.sum_age) AS sum_age
+  FROM scott_model.emp AS e
+  JOIN scott_model.pet AS p ON p.empno = e.mgr
+  GROUP BY p.species
+  ORDER BY p.species);
+> {_|
+WITH joined AS (
+  SELECT
+    p.species AS species,
+    e.empno AS e_k,
+    e.sal AS e_sal,
+    p.pname AS p_k,
+    p.age AS p_age
+  FROM scott.emp AS e
+  JOIN scott.pet AS p
+    ON p.empno = e.mgr
+), spine AS (
+  SELECT DISTINCT
+    species
+  FROM joined
+)
+SELECT
+  g.species,
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.e_k
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL AND j.species IS NOT DISTINCT FROM g.species
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS reports,
+  (
+    SELECT
+      SUM(x.sal)
+    FROM (
+      SELECT
+        ANY_VALUE(j.e_sal) AS sal
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL AND j.species IS NOT DISTINCT FROM g.species
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS reports_sal,
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.p_k
+      FROM joined AS j
+      WHERE
+        j.p_k IS NOT NULL AND j.species IS NOT DISTINCT FROM g.species
+      GROUP BY
+        j.p_k
+    ) AS x
+  ) AS pets,
+  (
+    SELECT
+      SUM(x.age)
+    FROM (
+      SELECT
+        ANY_VALUE(j.p_age) AS age
+      FROM joined AS j
+      WHERE
+        j.p_k IS NOT NULL AND j.species IS NOT DISTINCT FROM g.species
+      GROUP BY
+        j.p_k
+    ) AS x
+  ) AS sum_age
+FROM spine AS g
+ORDER BY
+  g.species
+|_} : string
++---------+---------+-------------+------+---------+
+| species | reports | reports_sal | pets | sum_age |
++---------+---------+-------------+------+---------+
+| CAT     |       4 |     7900.00 |    4 |      15 |
+| DOG     |       2 |     6000.00 |    1 |       7 |
++---------+---------+-------------+------+---------+
+
+# ----------------------------------------------------------------------------
 # B9-B13. One self-join query with each join type.
 #
 # e is the employee and m is the manager, joined on e.mgr = m.empno. Both
@@ -1275,6 +1529,20 @@ ORDER BY
 #
 # Naive SUM(m.sal) for the INNER join is 43650: KING's salary is counted 3
 # times and BLAKE's 5 times.
+#
+# Cases B9a to B13a run one query that joins emp to pet, on
+# p.empno = e.empno, with each join type. Both sides have rows that do not
+# match: 9 employees have no pet, and TRAMP has no owner.
+#
+#   join type   joined rows   e_count  e_sal     p_count  p_age
+#   INNER         7            5       11675.00  7        30
+#   LEFT         16           14       29025.00  7        30
+#   RIGHT         8            5       11675.00  8        34
+#   FULL         17           14       29025.00  8        34
+#   CROSS       112           14       29025.00  8        34
+#
+# Naive SUM(e.sal) for the INNER join is 17625: JONES's salary is counted 3
+# times.
 # Spec: 7.6, 8.1, G2 (8.3), A.6
 # ----------------------------------------------------------------------------
 
@@ -1361,6 +1629,88 @@ SELECT
 +---------+----------+---------+----------+
 
 # ----------------------------------------------------------------------------
+# B9a. INNER JOIN.
+# Only employees that have a pet, and only pets that have an owner.
+# ----------------------------------------------------------------------------
+executeExpand(
+  SELECT AGG(e.emp_count) AS e_count,
+         AGG(e.sum_sal) AS e_sal,
+         AGG(p.pet_count) AS p_count,
+         AGG(p.sum_age) AS p_age
+  FROM scott_model.emp AS e
+  JOIN scott_model.pet AS p ON p.empno = e.empno);
+> {_|
+WITH joined AS (
+  SELECT
+    e.empno AS e_k,
+    e.sal AS e_sal,
+    p.pname AS p_k,
+    p.age AS p_age
+  FROM scott.emp AS e
+  JOIN scott.pet AS p
+    ON p.empno = e.empno
+)
+SELECT
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.e_k
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS e_count,
+  (
+    SELECT
+      SUM(x.sal)
+    FROM (
+      SELECT
+        ANY_VALUE(j.e_sal) AS sal
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS e_sal,
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.p_k
+      FROM joined AS j
+      WHERE
+        j.p_k IS NOT NULL
+      GROUP BY
+        j.p_k
+    ) AS x
+  ) AS p_count,
+  (
+    SELECT
+      SUM(x.age)
+    FROM (
+      SELECT
+        ANY_VALUE(j.p_age) AS age
+      FROM joined AS j
+      WHERE
+        j.p_k IS NOT NULL
+      GROUP BY
+        j.p_k
+    ) AS x
+  ) AS p_age
+|_} : string
++---------+----------+---------+-------+
+| e_count | e_sal    | p_count | p_age |
++---------+----------+---------+-------+
+|       5 | 11675.00 |       7 |    30 |
++---------+----------+---------+-------+
+
+# ----------------------------------------------------------------------------
 # B10. LEFT JOIN.
 # KING is kept on the e side. KING's row is NULL-padded on the m side, so the
 # m measures do not change.
@@ -1442,6 +1792,88 @@ SELECT
 +---------+----------+---------+----------+
 |      14 | 29025.00 |       6 | 19275.00 |
 +---------+----------+---------+----------+
+
+# ----------------------------------------------------------------------------
+# B10a. LEFT JOIN.
+# All employees, and only pets that have an owner.
+# ----------------------------------------------------------------------------
+executeExpand(
+  SELECT AGG(e.emp_count) AS e_count,
+         AGG(e.sum_sal) AS e_sal,
+         AGG(p.pet_count) AS p_count,
+         AGG(p.sum_age) AS p_age
+  FROM scott_model.emp AS e
+  LEFT JOIN scott_model.pet AS p ON p.empno = e.empno);
+> {_|
+WITH joined AS (
+  SELECT
+    e.empno AS e_k,
+    e.sal AS e_sal,
+    p.pname AS p_k,
+    p.age AS p_age
+  FROM scott.emp AS e
+  LEFT JOIN scott.pet AS p
+    ON p.empno = e.empno
+)
+SELECT
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.e_k
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS e_count,
+  (
+    SELECT
+      SUM(x.sal)
+    FROM (
+      SELECT
+        ANY_VALUE(j.e_sal) AS sal
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS e_sal,
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.p_k
+      FROM joined AS j
+      WHERE
+        j.p_k IS NOT NULL
+      GROUP BY
+        j.p_k
+    ) AS x
+  ) AS p_count,
+  (
+    SELECT
+      SUM(x.age)
+    FROM (
+      SELECT
+        ANY_VALUE(j.p_age) AS age
+      FROM joined AS j
+      WHERE
+        j.p_k IS NOT NULL
+      GROUP BY
+        j.p_k
+    ) AS x
+  ) AS p_age
+|_} : string
++---------+----------+---------+-------+
+| e_count | e_sal    | p_count | p_age |
++---------+----------+---------+-------+
+|      14 | 29025.00 |       7 |    30 |
++---------+----------+---------+-------+
 
 # ----------------------------------------------------------------------------
 # B11. RIGHT JOIN.
@@ -1527,6 +1959,88 @@ SELECT
 +---------+----------+---------+----------+
 
 # ----------------------------------------------------------------------------
+# B11a. RIGHT JOIN.
+# Only employees that have a pet, and all pets.
+# ----------------------------------------------------------------------------
+executeExpand(
+  SELECT AGG(e.emp_count) AS e_count,
+         AGG(e.sum_sal) AS e_sal,
+         AGG(p.pet_count) AS p_count,
+         AGG(p.sum_age) AS p_age
+  FROM scott_model.emp AS e
+  RIGHT JOIN scott_model.pet AS p ON p.empno = e.empno);
+> {_|
+WITH joined AS (
+  SELECT
+    e.empno AS e_k,
+    e.sal AS e_sal,
+    p.pname AS p_k,
+    p.age AS p_age
+  FROM scott.emp AS e
+  RIGHT JOIN scott.pet AS p
+    ON p.empno = e.empno
+)
+SELECT
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.e_k
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS e_count,
+  (
+    SELECT
+      SUM(x.sal)
+    FROM (
+      SELECT
+        ANY_VALUE(j.e_sal) AS sal
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS e_sal,
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.p_k
+      FROM joined AS j
+      WHERE
+        j.p_k IS NOT NULL
+      GROUP BY
+        j.p_k
+    ) AS x
+  ) AS p_count,
+  (
+    SELECT
+      SUM(x.age)
+    FROM (
+      SELECT
+        ANY_VALUE(j.p_age) AS age
+      FROM joined AS j
+      WHERE
+        j.p_k IS NOT NULL
+      GROUP BY
+        j.p_k
+    ) AS x
+  ) AS p_age
+|_} : string
++---------+----------+---------+-------+
+| e_count | e_sal    | p_count | p_age |
++---------+----------+---------+-------+
+|       5 | 11675.00 |       8 |    34 |
++---------+----------+---------+-------+
+
+# ----------------------------------------------------------------------------
 # B12. FULL OUTER JOIN.
 # Both sides keep all 14 employees. Each side counts each employee once,
 # although the join has 22 rows.
@@ -1610,6 +2124,88 @@ SELECT
 +---------+----------+---------+----------+
 
 # ----------------------------------------------------------------------------
+# B12a. FULL OUTER JOIN.
+# All employees, and all pets.
+# ----------------------------------------------------------------------------
+executeExpand(
+  SELECT AGG(e.emp_count) AS e_count,
+         AGG(e.sum_sal) AS e_sal,
+         AGG(p.pet_count) AS p_count,
+         AGG(p.sum_age) AS p_age
+  FROM scott_model.emp AS e
+  FULL JOIN scott_model.pet AS p ON p.empno = e.empno);
+> {_|
+WITH joined AS (
+  SELECT
+    e.empno AS e_k,
+    e.sal AS e_sal,
+    p.pname AS p_k,
+    p.age AS p_age
+  FROM scott.emp AS e
+  FULL JOIN scott.pet AS p
+    ON p.empno = e.empno
+)
+SELECT
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.e_k
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS e_count,
+  (
+    SELECT
+      SUM(x.sal)
+    FROM (
+      SELECT
+        ANY_VALUE(j.e_sal) AS sal
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS e_sal,
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.p_k
+      FROM joined AS j
+      WHERE
+        j.p_k IS NOT NULL
+      GROUP BY
+        j.p_k
+    ) AS x
+  ) AS p_count,
+  (
+    SELECT
+      SUM(x.age)
+    FROM (
+      SELECT
+        ANY_VALUE(j.p_age) AS age
+      FROM joined AS j
+      WHERE
+        j.p_k IS NOT NULL
+      GROUP BY
+        j.p_k
+    ) AS x
+  ) AS p_age
+|_} : string
++---------+----------+---------+-------+
+| e_count | e_sal    | p_count | p_age |
++---------+----------+---------+-------+
+|      14 | 29025.00 |       8 |    34 |
++---------+----------+---------+-------+
+
+# ----------------------------------------------------------------------------
 # B13. CROSS JOIN.
 # The cross join has no condition and gives 14 x 14 = 196 rows. Each side
 # still counts each employee once. Naive SUM(e.sal) is 406350.
@@ -1690,6 +2286,88 @@ SELECT
 +---------+----------+---------+----------+
 |      14 | 29025.00 |      14 | 29025.00 |
 +---------+----------+---------+----------+
+
+# ----------------------------------------------------------------------------
+# B13a. CROSS JOIN.
+# All employees and all pets. Each employee is repeated 8 times, and each
+# pet 14 times.
+# ----------------------------------------------------------------------------
+executeExpand(
+  SELECT AGG(e.emp_count) AS e_count,
+         AGG(e.sum_sal) AS e_sal,
+         AGG(p.pet_count) AS p_count,
+         AGG(p.sum_age) AS p_age
+  FROM scott_model.emp AS e
+  CROSS JOIN scott_model.pet AS p);
+> {_|
+WITH joined AS (
+  SELECT
+    e.empno AS e_k,
+    e.sal AS e_sal,
+    p.pname AS p_k,
+    p.age AS p_age
+  FROM scott.emp AS e
+  CROSS JOIN scott.pet AS p
+)
+SELECT
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.e_k
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS e_count,
+  (
+    SELECT
+      SUM(x.sal)
+    FROM (
+      SELECT
+        ANY_VALUE(j.e_sal) AS sal
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS e_sal,
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.p_k
+      FROM joined AS j
+      WHERE
+        j.p_k IS NOT NULL
+      GROUP BY
+        j.p_k
+    ) AS x
+  ) AS p_count,
+  (
+    SELECT
+      SUM(x.age)
+    FROM (
+      SELECT
+        ANY_VALUE(j.p_age) AS age
+      FROM joined AS j
+      WHERE
+        j.p_k IS NOT NULL
+      GROUP BY
+        j.p_k
+    ) AS x
+  ) AS p_age
+|_} : string
++---------+----------+---------+-------+
+| e_count | e_sal    | p_count | p_age |
++---------+----------+---------+-------+
+|      14 | 29025.00 |       8 |    34 |
++---------+----------+---------+-------+
 
 # ----------------------------------------------------------------------------
 # B14-B17. One dept-emp query with inner and outer joins.
