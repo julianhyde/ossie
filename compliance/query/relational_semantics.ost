@@ -26,7 +26,7 @@
 #      (apache/ossie#502).
 #   3. The result of executing the expansion.
 #
-# Part A covers the fundamentals on one relation.
+# Part A covers the fundamentals on one relation. Part B covers joins.
 #
 # Run:
 #   cd ost; uv run ost ../compliance/query/relational_semantics.ost
@@ -619,5 +619,403 @@ ORDER BY
 | avg salary per emp   | 2073.21 |
 +----------------------+---------+
 (2 rows)
+
+
+# ============================================================================
+# Part B: joins
+#
+# A join can repeat a row of a measure's source (fan-out). An outer join can
+# also add NULL-padded rows that come from no source row. AGG(m) aggregates
+# each source row of m once and ignores NULL-padded rows (spec Section 8.1).
+# The comments give the result of a plain aggregate over the joined rows
+# ("naive") where it differs.
+#
+# The expansion applies the reference strategy of spec Section 9:
+#   1. The CTE "joined" is the Ossie query's FROM, JOIN, and WHERE. For each
+#      measure, it also carries the row-identity key (<alias>_k, which is the
+#      primary key of the dataset) and the arguments of the aggregate.
+#   2. The CTE "spine" has one row for each group: SELECT DISTINCT over the
+#      grouping columns. A grand total has one group and needs no spine.
+#   3. For each measure, a correlated subquery selects the joined rows of the
+#      group, removes the rows where the key is NULL, reduces the rows to one
+#      for each key (GROUP BY key), and then applies the aggregate.
+#   4. Scalar expressions over AGG() results apply to the per-group values.
+#
+# B1-B3:   joins that repeat no row of the measure's source.
+# B4-B8:   joins that repeat rows: fan-out and many-to-many.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# B1. Many-to-one join, group by a field of the joined relation.
+# Each employee matches one department, so the join repeats no emp row. The
+# measures are the same as the per-department totals of A2.
+# Spec: 7.6
+# ----------------------------------------------------------------------------
+executeExpand(
+  SELECT d.dname,
+         AGG(e.sum_sal) AS sum_sal,
+         AGG(e.emp_count) AS emp_count
+  FROM scott_model.emp AS e
+  JOIN scott_model.dept AS d ON e.deptno = d.deptno
+  GROUP BY d.dname
+  ORDER BY d.dname);
+> {_|
+WITH joined AS (
+  SELECT
+    d.dname AS dname,
+    e.empno AS e_k,
+    e.sal AS e_sal
+  FROM scott.emp AS e
+  JOIN scott.dept AS d
+    ON e.deptno = d.deptno
+), spine AS (
+  SELECT DISTINCT
+    dname
+  FROM joined
+)
+SELECT
+  g.dname,
+  (
+    SELECT
+      SUM(x.sal)
+    FROM (
+      SELECT
+        ANY_VALUE(j.e_sal) AS sal
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL AND j.dname IS NOT DISTINCT FROM g.dname
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS sum_sal,
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.e_k
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL AND j.dname IS NOT DISTINCT FROM g.dname
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS emp_count
+FROM spine AS g
+ORDER BY
+  g.dname
+|_} : string
++------------+----------+-----------+
+| dname      | sum_sal  | emp_count |
++------------+----------+-----------+
+| ACCOUNTING |  8750.00 |         3 |
+| RESEARCH   | 10875.00 |         5 |
+| SALES      |  9400.00 |         6 |
++------------+----------+-----------+
+(3 rows)
+
+# ----------------------------------------------------------------------------
+# B2. WHERE on a field of the joined relation.
+# A filter on dept removes emp rows from the input set, as a filter on emp
+# does. Only the employees in NEW YORK remain.
+# Spec: 7.6, G1 (8.2)
+# ----------------------------------------------------------------------------
+executeExpand(
+  SELECT e.job,
+         AGG(e.sum_sal) AS sum_sal,
+         AGG(e.emp_count) AS emp_count
+  FROM scott_model.emp AS e
+  JOIN scott_model.dept AS d ON e.deptno = d.deptno
+  WHERE d.loc = 'NEW YORK'
+  GROUP BY e.job
+  ORDER BY e.job);
+> {_|
+WITH joined AS (
+  SELECT
+    e.job AS job,
+    e.empno AS e_k,
+    e.sal AS e_sal
+  FROM scott.emp AS e
+  JOIN scott.dept AS d
+    ON e.deptno = d.deptno
+  WHERE
+    d.loc = 'NEW YORK'
+), spine AS (
+  SELECT DISTINCT
+    job
+  FROM joined
+)
+SELECT
+  g.job,
+  (
+    SELECT
+      SUM(x.sal)
+    FROM (
+      SELECT
+        ANY_VALUE(j.e_sal) AS sal
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL AND j.job IS NOT DISTINCT FROM g.job
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS sum_sal,
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.e_k
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL AND j.job IS NOT DISTINCT FROM g.job
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS emp_count
+FROM spine AS g
+ORDER BY
+  g.job
+|_} : string
++-----------+---------+-----------+
+| job       | sum_sal | emp_count |
++-----------+---------+-----------+
+| CLERK     | 1300.00 |         1 |
+| MANAGER   | 2450.00 |         1 |
+| PRESIDENT | 5000.00 |         1 |
++-----------+---------+-----------+
+(3 rows)
+
+# ----------------------------------------------------------------------------
+# B3. Top-N filter through a join.
+# The subquery selects the two departments with the largest payroll (20 and
+# 30). The join to it acts as a filter on emp, and the outer query reports
+# payroll by job for those departments. The departments that the subquery
+# ranks are the same values that the join matches (closure, spec 8.4).
+# Spec: 7.6, 8.4, A.2
+# ----------------------------------------------------------------------------
+executeExpand(
+  SELECT e.job, AGG(e.sum_sal) AS sum_sal
+  FROM scott_model.emp AS e
+  JOIN (SELECT deptno
+        FROM scott_model.emp
+        GROUP BY deptno
+        ORDER BY AGG(sum_sal) DESC
+        LIMIT 2) AS t ON e.deptno = t.deptno
+  GROUP BY e.job
+  ORDER BY e.job);
+> {_|
+WITH joined AS (
+  SELECT
+    e.job AS job,
+    e.empno AS e_k,
+    e.sal AS e_sal
+  FROM scott.emp AS e
+  JOIN (
+    SELECT
+      deptno
+    FROM scott.emp
+    GROUP BY
+      deptno
+    ORDER BY
+      SUM(sal) DESC
+    LIMIT 2
+  ) AS t
+    ON e.deptno = t.deptno
+), spine AS (
+  SELECT DISTINCT
+    job
+  FROM joined
+)
+SELECT
+  g.job,
+  (
+    SELECT
+      SUM(x.sal)
+    FROM (
+      SELECT
+        ANY_VALUE(j.e_sal) AS sal
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL AND j.job IS NOT DISTINCT FROM g.job
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS sum_sal
+FROM spine AS g
+ORDER BY
+  g.job
+|_} : string
++----------+---------+
+| job      | sum_sal |
++----------+---------+
+| ANALYST  | 6000.00 |
+| CLERK    | 2850.00 |
+| MANAGER  | 5825.00 |
+| SALESMAN | 5600.00 |
++----------+---------+
+(4 rows)
+
+# ----------------------------------------------------------------------------
+# B4. Fan-out: a measure of the "one" side, grouped by the "many" side.
+# The join repeats each dept row once for each employee in it. AGG(dept_count)
+# counts each department once in each group, so the result is the number of
+# departments that have the job. Naive COUNT(*) gives 2, 4, 3, 1, 4, which
+# AGG(e.emp_count) also gives, because the join repeats no emp row.
+# Spec: 7.6, G2 (8.3)
+# ----------------------------------------------------------------------------
+executeExpand(
+  SELECT e.job,
+         AGG(d.dept_count) AS dept_count,
+         AGG(e.emp_count) AS emp_count
+  FROM scott_model.emp AS e
+  JOIN scott_model.dept AS d ON e.deptno = d.deptno
+  GROUP BY e.job
+  ORDER BY e.job);
+> {_|
+WITH joined AS (
+  SELECT
+    e.job AS job,
+    d.deptno AS d_k,
+    e.empno AS e_k
+  FROM scott.emp AS e
+  JOIN scott.dept AS d
+    ON e.deptno = d.deptno
+), spine AS (
+  SELECT DISTINCT
+    job
+  FROM joined
+)
+SELECT
+  g.job,
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.d_k
+      FROM joined AS j
+      WHERE
+        j.d_k IS NOT NULL AND j.job IS NOT DISTINCT FROM g.job
+      GROUP BY
+        j.d_k
+    ) AS x
+  ) AS dept_count,
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.e_k
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL AND j.job IS NOT DISTINCT FROM g.job
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS emp_count
+FROM spine AS g
+ORDER BY
+  g.job
+|_} : string
++-----------+------------+-----------+
+| job       | dept_count | emp_count |
++-----------+------------+-----------+
+| ANALYST   |          1 |         2 |
+| CLERK     |          3 |         4 |
+| MANAGER   |          3 |         3 |
+| PRESIDENT |          1 |         1 |
+| SALESMAN  |          1 |         4 |
++-----------+------------+-----------+
+(5 rows)
+
+# ----------------------------------------------------------------------------
+# B5. Fan-out in a self-join: the manager's salary.
+# e is the employee and m is the manager. The join repeats each manager row
+# once for each report. AGG(m.sum_sal) counts each manager's salary once in
+# each group. The 4 salesmen all report to BLAKE, so the result is 2850; the
+# naive SUM(m.sal) is 11400. The 4 clerks report to 4 different managers, so
+# the two values are the same (11300). Naive SUM(m.sal) by job is 5950,
+# 11300, 15000, 11400.
+# Spec: 7.6, 8.1, G2 (8.3)
+# ----------------------------------------------------------------------------
+executeExpand(
+  SELECT e.job,
+         AGG(e.emp_count) AS emp_count,
+         AGG(m.emp_count) AS managers,
+         AGG(m.sum_sal) AS managers_sal
+  FROM scott_model.emp AS e
+  JOIN scott_model.emp AS m ON e.mgr = m.empno
+  GROUP BY e.job
+  ORDER BY e.job);
+> {_|
+WITH joined AS (
+  SELECT
+    e.job AS job,
+    e.empno AS e_k,
+    m.empno AS m_k,
+    m.sal AS m_sal
+  FROM scott.emp AS e
+  JOIN scott.emp AS m
+    ON e.mgr = m.empno
+), spine AS (
+  SELECT DISTINCT
+    job
+  FROM joined
+)
+SELECT
+  g.job,
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.e_k
+      FROM joined AS j
+      WHERE
+        j.e_k IS NOT NULL AND j.job IS NOT DISTINCT FROM g.job
+      GROUP BY
+        j.e_k
+    ) AS x
+  ) AS emp_count,
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.m_k
+      FROM joined AS j
+      WHERE
+        j.m_k IS NOT NULL AND j.job IS NOT DISTINCT FROM g.job
+      GROUP BY
+        j.m_k
+    ) AS x
+  ) AS managers,
+  (
+    SELECT
+      SUM(x.sal)
+    FROM (
+      SELECT
+        ANY_VALUE(j.m_sal) AS sal
+      FROM joined AS j
+      WHERE
+        j.m_k IS NOT NULL AND j.job IS NOT DISTINCT FROM g.job
+      GROUP BY
+        j.m_k
+    ) AS x
+  ) AS managers_sal
+FROM spine AS g
+ORDER BY
+  g.job
+|_} : string
++----------+-----------+----------+--------------+
+| job      | emp_count | managers | managers_sal |
++----------+-----------+----------+--------------+
+| ANALYST  |         2 |        1 |      2975.00 |
+| CLERK    |         4 |        4 |     11300.00 |
+| MANAGER  |         3 |        1 |      5000.00 |
+| SALESMAN |         4 |        1 |      2850.00 |
++----------+-----------+----------+--------------+
+(4 rows)
 
 # End relational_semantics.ost
