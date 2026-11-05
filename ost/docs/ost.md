@@ -505,9 +505,23 @@ that are deterministic:
   that, `ANSI_SQL`). A subquery or CTE that projects a measure
   without evaluating it passes the measure through: it projects,
   instead, the columns that the measure's expression needs, and the
-  enclosing query evaluates the measure. The expander does not
-  support joins of a relation that has measures, nor fields whose
-  expression is other than their name, yet.
+  enclosing query evaluates the measure.
+
+  A query that joins relations and evaluates measures is expanded by
+  the reference strategy of Section 9 of the Relational Query
+  Interface specification, so that a join that repeats a row of a
+  measure's relation does not repeat it in the measure. A CTE
+  `joined` has the query's `FROM`, `JOIN` and `WHERE` clauses; a CTE
+  `spine` has one row per group; and each `AGG(m)` becomes a
+  correlated subquery that reduces the group's joined rows to one
+  per row-identity key of *m*'s relation (its dataset's
+  `primary_key`), then applies *m*'s aggregate.
+
+  The expander does not support, yet: fields whose expression is
+  other than their name; in a join, measures of a subquery, plain
+  aggregates, `GROUP BY ALL`, `ROLLUP`, `CUBE` and `GROUPING SETS`;
+  and a query that passes measures through a join without
+  evaluating them.
 
 `executeExpand(sql)`
 : Expands the query *sql*, as `expand` does, and executes the

@@ -97,6 +97,7 @@ name: m
 datasets:
   - name: staff
     source: scott.emp
+    primary_key: [empno]
     metrics:
       - name: sum_sal
         expression: {dialects: [{dialect: OSSIE_SQL_2026, expression: SUM(sal)}]}
@@ -104,6 +105,17 @@ datasets:
         expression: {dialects: [{dialect: ANSI_SQL, expression: COUNT(*)}]}
       - name: mdx_count
         expression: {dialects: [{dialect: MDX, expression: "[Measures].[Count]"}]}
+  - name: dept
+    source: scott.dept
+    primary_key: [deptno]
+    metrics:
+      - name: dept_count
+        expression: {dialects: [{dialect: OSSIE_SQL_2026, expression: COUNT(*)}]}
+  - name: grade
+    source: scott.salgrade
+    metrics:
+      - name: grade_count
+        expression: {dialects: [{dialect: OSSIE_SQL_2026, expression: COUNT(*)}]}
 |_});
 modelInline("m2", {_|
 version: 0.3.0.dev0
@@ -269,6 +281,204 @@ FROM (
     job = 'CLERK'
 ) AS v
 |_} : string
+# A query that joins relations and evaluates measures is expanded by the
+# reference strategy of spec Section 9. A grand total needs no spine. A
+# grouping key may be an expression, and HAVING and ORDER BY may use
+# measures. An outer join adds rows whose key is NULL, which no measure
+# counts: department 40 has no employee.
+executeExpand(
+  select agg(s.sum_sal) as sum_sal, agg(d.dept_count) as dept_count
+  from m.staff as s
+  join m.dept as d on s.deptno = d.deptno);
+> {_|
+WITH joined AS (
+  SELECT
+    s.empno AS s_k,
+    s.sal AS s_sal,
+    d.deptno AS d_k
+  FROM scott.emp AS s
+  JOIN scott.dept AS d
+    ON s.deptno = d.deptno
+)
+SELECT
+  (
+    SELECT
+      SUM(x.sal)
+    FROM (
+      SELECT
+        ANY_VALUE(j.s_sal) AS sal
+      FROM joined AS j
+      WHERE
+        j.s_k IS NOT NULL
+      GROUP BY
+        j.s_k
+    ) AS x
+  ) AS sum_sal,
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.d_k
+      FROM joined AS j
+      WHERE
+        j.d_k IS NOT NULL
+      GROUP BY
+        j.d_k
+    ) AS x
+  ) AS dept_count
+|_} : string
++----------+------------+
+| sum_sal  | dept_count |
++----------+------------+
+| 29025.00 |          3 |
++----------+------------+
+executeExpand(
+  select lower(d.dname) as name, agg(sum_sal) / agg(dept_count) as x
+  from m.staff as s
+  join m.dept as d on s.deptno = d.deptno
+  where s.job <> 'CLERK'
+  group by 1
+  having agg(ansi_count) > 2
+  order by agg(sum_sal) desc);
+> {_|
+WITH joined AS (
+  SELECT
+    LOWER(d.dname) AS name,
+    s.empno AS s_k,
+    s.sal AS s_sal,
+    d.deptno AS d_k
+  FROM scott.emp AS s
+  JOIN scott.dept AS d
+    ON s.deptno = d.deptno
+  WHERE
+    s.job <> 'CLERK'
+), spine AS (
+  SELECT DISTINCT
+    name
+  FROM joined
+)
+SELECT
+  g.name AS name,
+  (
+    SELECT
+      SUM(x.sal)
+    FROM (
+      SELECT
+        ANY_VALUE(j.s_sal) AS sal
+      FROM joined AS j
+      WHERE
+        j.s_k IS NOT NULL AND j.name IS NOT DISTINCT FROM g.name
+      GROUP BY
+        j.s_k
+    ) AS x
+  ) / (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.d_k
+      FROM joined AS j
+      WHERE
+        j.d_k IS NOT NULL AND j.name IS NOT DISTINCT FROM g.name
+      GROUP BY
+        j.d_k
+    ) AS x
+  ) AS x
+FROM spine AS g
+WHERE
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.s_k
+      FROM joined AS j
+      WHERE
+        j.s_k IS NOT NULL AND j.name IS NOT DISTINCT FROM g.name
+      GROUP BY
+        j.s_k
+    ) AS x
+  ) > 2
+ORDER BY
+  (
+    SELECT
+      SUM(x.sal)
+    FROM (
+      SELECT
+        ANY_VALUE(j.s_sal) AS sal
+      FROM joined AS j
+      WHERE
+        j.s_k IS NOT NULL AND j.name IS NOT DISTINCT FROM g.name
+      GROUP BY
+        j.s_k
+    ) AS x
+  ) DESC
+|_} : string
++----------+--------+
+| name     | x      |
++----------+--------+
+| research | 8975.0 |
+| sales    | 8450.0 |
++----------+--------+
+executeExpand(
+  select d.dname, agg(s.ansi_count) as c, agg(d.dept_count) as dc
+  from m.dept as d
+  left join m.staff as s on s.deptno = d.deptno
+  group by d.dname);
+> {_|
+WITH joined AS (
+  SELECT
+    d.dname AS dname,
+    s.empno AS s_k,
+    d.deptno AS d_k
+  FROM scott.dept AS d
+  LEFT JOIN scott.emp AS s
+    ON s.deptno = d.deptno
+), spine AS (
+  SELECT DISTINCT
+    dname
+  FROM joined
+)
+SELECT
+  g.dname,
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.s_k
+      FROM joined AS j
+      WHERE
+        j.s_k IS NOT NULL AND j.dname IS NOT DISTINCT FROM g.dname
+      GROUP BY
+        j.s_k
+    ) AS x
+  ) AS c,
+  (
+    SELECT
+      COUNT(*)
+    FROM (
+      SELECT
+        j.d_k
+      FROM joined AS j
+      WHERE
+        j.d_k IS NOT NULL AND j.dname IS NOT DISTINCT FROM g.dname
+      GROUP BY
+        j.d_k
+    ) AS x
+  ) AS dc
+FROM spine AS g
+|_} : string
++------------+---+----+
+| dname      | c | dc |
++------------+---+----+
+| RESEARCH   | 5 |  1 |
+| SALES      | 6 |  1 |
+| OPERATIONS | 0 |  1 |
+| ACCOUNTING | 3 |  1 |
++------------+---+----+
+
 # The expansion keeps NULLS FIRST and NULLS LAST, even where they are the
 # default in DuckDB, because they might not be in another database.
 expand(select deptno, agg(sum_sal) from m.staff group by 1 order by 1 nulls last, 2 desc nulls first);
@@ -330,8 +540,43 @@ executeExpand(select agg(nope) from m.staff);
 # Errors.
 expand(select agg(nope) from m.staff);
 > error: unknown measure nope
-expand(select agg(sum_sal) from m.staff, scott.dept);
-> error: view expander does not support joins yet
+expand(select agg(sum_sal) from m.staff as s join m.staff as t on s.mgr = t.empno);
+> error: ambiguous measure sum_sal
+expand(select agg(sum_sal) from m.staff as s join m.grade as g on s.sal between g.losal and g.hisal);
+> {_|
+WITH joined AS (
+  SELECT
+    s.empno AS s_k,
+    s.sal AS s_sal
+  FROM scott.emp AS s
+  JOIN scott.salgrade AS g
+    ON s.sal BETWEEN g.losal AND g.hisal
+)
+SELECT
+  (
+    SELECT
+      SUM(x.sal)
+    FROM (
+      SELECT
+        ANY_VALUE(j.s_sal) AS sal
+      FROM joined AS j
+      WHERE
+        j.s_k IS NOT NULL
+      GROUP BY
+        j.s_k
+    ) AS x
+  )
+|_} : string
+expand(select agg(grade_count) from m.staff as s join m.grade as g on s.sal between g.losal and g.hisal);
+> error: dataset grade has no primary key
+expand(select max(s.sal), agg(dept_count) from m.staff as s join m.dept as d on s.deptno = d.deptno);
+> error: view expander does not support plain aggregates in a join yet: MAX(s.sal)
+expand(select d.loc, agg(dept_count) from m.staff as s join m.dept as d on s.deptno = d.deptno group by rollup (d.loc));
+> error: view expander does not support GROUP BY ALL, ROLLUP, CUBE or GROUPING SETS in a join yet
+expand(select * from (select s.deptno, sum_sal from m.staff as s join m.dept as d on s.deptno = d.deptno));
+> error: view expander does not support measures through a join yet
+expand(select agg(t.sum_sal) from m.staff as s join (select * from m.staff) as t on s.mgr = t.empno);
+> error: view expander does not support a join of a subquery with measures yet
 expand(select agg(mdx_count) from m.staff);
 > error: no expression in dialect OSSIE_SQL_2026 or ANSI_SQL
 expand(select agg(sal) from scott.emp);
