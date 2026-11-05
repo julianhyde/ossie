@@ -703,6 +703,27 @@ ORDER BY
 | SALES      |  9400.00 |         6 |
 +------------+----------+-----------+
 
+# Note: B1 can be optimized. Each emp row joins to at most one dept row,
+# because the join is on dept's primary key (deptno). So the join repeats
+# no emp row, and a plain aggregate over the joined rows gives the same
+# result as the reference strategy, without "joined", "spine" or a
+# correlated subquery. (Spec Section 9 allows any strategy whose results
+# equal those of the reference strategy.) The optimized query:
+SELECT d.dname,
+       SUM(e.sal) AS sum_sal,
+       COUNT(*) AS emp_count
+FROM scott.emp AS e
+JOIN scott.dept AS d ON e.deptno = d.deptno
+GROUP BY d.dname
+ORDER BY d.dname;
++------------+----------+-----------+
+| dname      | sum_sal  | emp_count |
++------------+----------+-----------+
+| ACCOUNTING |  8750.00 |         3 |
+| RESEARCH   | 10875.00 |         5 |
+| SALES      |  9400.00 |         6 |
++------------+----------+-----------+
+
 # ----------------------------------------------------------------------------
 # B2. WHERE on a field of the joined relation.
 # A filter on dept removes emp rows from the input set, as a filter on emp
