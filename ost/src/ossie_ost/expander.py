@@ -34,6 +34,7 @@ needs. A view is replaced with its query, as a subquery.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 import sqlglot
@@ -52,6 +53,7 @@ class Sql(DuckDB):
     sqlglot writes ``NULLS FIRST`` or ``NULLS LAST`` only if it differs
     from DuckDB's default. This dialect writes it if the query did, so
     that the expansion does not rely on the default of the database.
+    It also writes ``x IS NOT NULL``, not ``NOT x IS NULL``.
     """
 
     class Parser(DuckDB.Parser):
@@ -74,6 +76,12 @@ class Sql(DuckDB):
             if nulls and not sql.upper().endswith(" NULLS " + nulls):
                 sql += " NULLS " + nulls
             return sql
+
+        def not_sql(self, expression: exp.Not) -> str:
+            operand = expression.this
+            if isinstance(operand, exp.Is) and isinstance(operand.expression, exp.Null):
+                return f"{self.sql(operand, 'this')} IS NOT NULL"
+            return super().not_sql(expression)
 
 
 @dataclass
@@ -205,7 +213,10 @@ def _expand_select(
     if not inputs:
         return {}
     if len(relations) > 1:
-        raise ValueError("view expander does not support joins yet")
+        if not any(True for _ in _measure_calls(select)):
+            raise ValueError("view expander does not support measures through a join yet")
+        _expand_join(select, relations, catalog, ctes, outputs)
+        return {}
     relation, measures = inputs[0]
     alias = relation.alias_or_name.lower()
     _replace_dataset(relation, catalog)
@@ -213,10 +224,7 @@ def _expand_select(
     # Replace each AGG(m) in this SELECT, but not in its subqueries,
     # with the expression of measure m.
     evaluated = False
-    for node in list(select.walk()):
-        ref = _measure_ref(node)
-        if ref is None or node.find_ancestor(exp.Select) is not select:
-            continue
+    for node, ref in list(_measure_calls(select)):
         expression = None
         if isinstance(ref, exp.Column) and ref.table.lower() in ("", alias):
             expression = measures.get(ref.name.lower())
@@ -229,6 +237,213 @@ def _expand_select(
     if evaluated:
         return {}
     return _project_measures(select, alias, measures)
+
+
+def _measure_calls(select: exp.Select) -> Iterator[tuple[exp.Expression, exp.Expression]]:
+    """Yields each ``AGG(m)`` in a SELECT, but not in its subqueries,
+    and its argument ``m``."""
+    for node in select.walk():
+        ref = _measure_ref(node)
+        if ref is not None and node.find_ancestor(exp.Select) is select:
+            yield node, ref
+
+
+def _expand_join(
+    select: exp.Select,
+    relations: list[exp.Expression],
+    catalog: Catalog,
+    ctes: dict[str, exp.Expression],
+    outputs: dict[int, Measures],
+) -> None:
+    """Expands an aggregate SELECT whose FROM clause joins relations,
+    and that evaluates measures, by the reference evaluation strategy
+    of spec Section 9.
+
+    A CTE ``joined`` is the FROM, JOIN and WHERE clauses of the query.
+    It projects the grouping keys, and for each relation whose measures
+    the query evaluates, the row-identity key (the dataset's primary
+    key) and the columns that the measures need. A CTE ``spine`` has
+    one row per group. Each ``AGG(m)`` becomes a correlated subquery
+    that reduces the joined rows of its group to one row per key of
+    ``m``'s relation, removing those where the key is NULL (rows that
+    an outer join added), then applies ``m``'s aggregate.
+    """
+    # The relations, by alias, and the datasets of those that are
+    # relations of a model.
+    datasets: dict[str, OssieDataset | None] = {}
+    measures: dict[str, Measures] = {}
+    for relation in relations:
+        alias = relation.alias_or_name.lower()
+        if alias in datasets:
+            raise ValueError(f"duplicate relation {alias}")
+        datasets[alias] = (
+            catalog.dataset(relation) if isinstance(relation, exp.Table) else None
+        )
+        measures[alias] = _measures(relation, catalog, ctes, outputs)
+
+    for node in select.find_all(exp.AggFunc):
+        if (
+            not isinstance(node, exp.Agg)
+            and node.find_ancestor(exp.Select) is select
+            and not any(_measure_ref(a) is not None for a in node.iter_expressions())
+        ):
+            raise ValueError(
+                "view expander does not support plain aggregates in a join yet: "
+                + node.sql(dialect=Sql)
+            )
+
+    # Resolve each AGG(m) to its relation and expression.
+    calls = []
+    for node, ref in list(_measure_calls(select)):
+        if not isinstance(ref, exp.Column):
+            raise ValueError(f"unknown measure {ref.sql(dialect=Sql)}")
+        name = ref.name.lower()
+        if ref.table:
+            aliases = [ref.table.lower()] if name in measures.get(ref.table.lower(), {}) else []
+        else:
+            aliases = [a for a, m in measures.items() if name in m]
+        if not aliases:
+            raise ValueError(f"unknown measure {ref.sql(dialect=Sql)}")
+        if len(aliases) > 1:
+            raise ValueError(f"ambiguous measure {ref.sql(dialect=Sql)}")
+        alias = aliases[0]
+        expression = measures[alias][name]
+        if isinstance(expression, ValueError):
+            raise expression
+        dataset = datasets[alias]
+        if dataset is None:
+            raise ValueError(
+                "view expander does not support a join of a subquery with measures yet"
+            )
+        if not dataset.primary_key:
+            raise ValueError(f"dataset {dataset.name} has no primary key")
+        calls.append((node, alias, dataset, expression))
+
+    # The grouping keys, and their names in "joined". A key that is an
+    # item of the SELECT list takes the item's name.
+    group = select.args.get("group")
+    keys: list[exp.Expression] = []
+    if group is not None:
+        if group.args.get("all") or any(
+            isinstance(e, (exp.Rollup, exp.Cube, exp.GroupingSets))
+            for e in group.expressions
+        ):
+            raise ValueError(
+                "view expander does not support GROUP BY ALL, ROLLUP, CUBE or "
+                "GROUPING SETS in a join yet"
+            )
+        items = {i.alias_or_name.lower(): i.unalias() for i in select.expressions}
+        for key in group.expressions:
+            if isinstance(key, exp.Literal) and key.is_int:
+                key = select.expressions[int(key.name) - 1].unalias()
+            elif isinstance(key, exp.Column) and not key.table:
+                key = items.get(key.name.lower(), key)
+            keys.append(key)
+    names: list[str] = []
+    for i, key in enumerate(keys):
+        item = next((x for x in select.expressions if x.unalias() == key), None)
+        name = item.alias_or_name if item is not None else ""
+        if not name or name.lower() in (n.lower() for n in names):
+            name = f"g{i + 1}"
+        names.append(name)
+
+    # Project, in "joined", the key and the columns of each relation
+    # whose measures the query evaluates.
+    joined_items = [exp.alias_(k.copy(), n) for k, n in zip(keys, names)]
+    projected: set[str] = set()
+
+    def project(alias: str, column: str) -> str:
+        name = f"{alias}_{column}"
+        if name.lower() not in projected:
+            projected.add(name.lower())
+            joined_items.append(exp.alias_(exp.column(column, alias), name))
+        return name
+
+    def key_columns(alias: str, dataset: OssieDataset) -> list[str]:
+        if len(dataset.primary_key) == 1:
+            name = f"{alias}_k"
+            if name.lower() not in projected:
+                projected.add(name.lower())
+                joined_items.append(
+                    exp.alias_(exp.column(dataset.primary_key[0], alias), name)
+                )
+            return [name]
+        return [project(alias, c) for c in dataset.primary_key]
+
+    subqueries = []
+    for node, alias, dataset, expression in calls:
+        k = key_columns(alias, dataset)
+        expression = expression.copy()
+        columns = {}
+        for column in expression.find_all(exp.Column):
+            columns.setdefault(column.name.lower(), column.name)
+        inner_items = [
+            exp.alias_(exp.func("ANY_VALUE", exp.column(project(alias, c), "j")), c)
+            for c in columns.values()
+        ] or [exp.column(n, "j") for n in k]
+        condition = exp.column(k[0], "j").is_(exp.null()).not_()
+        for name in names:
+            condition = exp.and_(
+                condition,
+                exp.NullSafeEQ(this=exp.column(name, "j"), expression=exp.column(name, "g")),
+            )
+        inner = (
+            exp.select(*inner_items)
+            .from_(exp.alias_(exp.to_table("joined"), "j", table=True))
+            .where(condition)
+            .group_by(*[exp.column(n, "j") for n in k])
+        )
+        for column in list(expression.find_all(exp.Column)):
+            column.replace(exp.column(column.name, "x"))
+        subqueries.append(
+            (node, exp.select(expression).from_(inner.subquery("x")).subquery())
+        )
+
+    # Replace each grouping key, outside AGG(), with the key's column in
+    # "spine", and each AGG(m) with its subquery.
+    def replace_keys(node: exp.Expression) -> exp.Expression:
+        if _measure_ref(node) is not None:
+            return node
+        for key, name in zip(keys, names):
+            if node == key:
+                return exp.column(name, "g")
+        return node
+
+    for arg in ("expressions", "having", "order"):
+        value = select.args.get(arg)
+        for child in value if isinstance(value, list) else [value]:
+            if child is None:
+                continue
+            new = child.transform(replace_keys, copy=False)
+            if new is not child:
+                child.replace(new)
+    for node, subquery in subqueries:
+        node.replace(subquery)
+
+    # "joined" has the FROM, JOIN and WHERE clauses of the query.
+    for relation in relations:
+        _replace_dataset(relation, catalog)
+    joined = exp.Select(expressions=joined_items)
+    for arg in ("from_", "joins", "where"):
+        joined.set(arg, select.args.get(arg))
+        select.set(arg, None)
+    with_ = select.args.get("with_")
+    ctes_ = list(with_.expressions) if with_ else []
+    ctes_.append(exp.CTE(this=joined, alias=exp.TableAlias(this=exp.to_identifier("joined"))))
+    if keys:
+        spine = (
+            exp.select(*[exp.column(n) for n in names])
+            .distinct()
+            .from_("joined")
+        )
+        ctes_.append(exp.CTE(this=spine, alias=exp.TableAlias(this=exp.to_identifier("spine"))))
+        select.set("from_", exp.From(this=exp.alias_(exp.to_table("spine"), "g", table=True)))
+    select.set("with_", exp.With(expressions=ctes_))
+    select.set("group", None)
+    having = select.args.get("having")
+    select.set("having", None)
+    if having is not None:
+        select.set("where", exp.Where(this=having.this))
 
 
 def _measures(
