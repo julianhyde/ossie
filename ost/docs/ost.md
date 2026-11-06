@@ -472,7 +472,9 @@ shows only the rows that changed.
   * `"empty"` - no tables.
   * `"scott"` - the SCOTT schema: tables `dept`, `emp`, `bonus` and
     `salgrade` in schema `scott`, which is on the search path, so
-    both `emp` and `scott.emp` work.
+    both `emp` and `scott.emp` work. It also has a table `pet`, which
+    is not part of SCOTT: each pet has a name, an owner (`empno`), a
+    `species` and an `age`.
 
   Each script starts as if it began with `connect("empty")`.
   `connect` also forgets the models and views that the script has
