@@ -572,8 +572,11 @@ def _measure_ref(node: exp.Expression) -> exp.Expression | None:
 
 def _expression(expression: OssieExpression) -> str:
     """Returns the text of an expression in a dialect that the
-    expander can read."""
-    by_dialect = {d.dialect: d.expression for d in expression.dialects}
+    expander can read: its ``sql``, which is in OSSIE_SQL_2026, or
+    else its expression in one of ``DIALECTS``."""
+    if expression.sql is not None:
+        return expression.sql
+    by_dialect = {d.dialect: d.expression for d in expression.dialects or []}
     for dialect in DIALECTS:
         if dialect in by_dialect:
             return by_dialect[dialect]

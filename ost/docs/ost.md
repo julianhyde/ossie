@@ -487,11 +487,11 @@ that are deterministic:
   The view expander replaces each view with its query, as a
   subquery. It replaces each relation of a model with its dataset's
   source, and each `AGG(m)`, or its synonym `MEASURE(m)`, with the
-  expression of metric *m* (in dialect `OSSIE_SQL_2026` or, failing
-  that, `ANSI_SQL`). A subquery or CTE that projects a measure
-  without evaluating it passes the measure through: it projects,
-  instead, the columns that the measure's expression needs, and the
-  enclosing query evaluates the measure.
+  expression of metric *m*: its `sql`, or else its expression in
+  dialect `OSSIE_SQL_2026` or `ANSI_SQL`. A subquery or CTE that
+  projects a measure without evaluating it passes the measure
+  through: it projects, instead, the columns that the measure's
+  expression needs, and the enclosing query evaluates the measure.
 
   A query that joins relations and evaluates measures is expanded by
   the reference strategy of Section 9 of the Relational Query
