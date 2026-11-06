@@ -103,6 +103,8 @@ datasets:
         expression: {dialects: [{dialect: OSSIE_SQL_2026, expression: SUM(sal)}]}
       - name: ansi_count
         expression: {dialects: [{dialect: ANSI_SQL, expression: COUNT(*)}]}
+      - name: max_sal
+        expression: {sql: MAX(sal)}
       - name: mdx_count
         expression: {dialects: [{dialect: MDX, expression: "[Measures].[Count]"}]}
   - name: dept
@@ -497,6 +499,16 @@ expand(select 1);
 > {_|
 SELECT
   1
+|_} : string
+
+# A metric's expression may be in the form "sql", in OSSIE_SQL_2026,
+# or in a list of dialects.
+expand(select agg(max_sal), agg(sum_sal) from m.staff);
+> {_|
+SELECT
+  MAX(sal),
+  SUM(sal)
+FROM scott.emp AS staff
 |_} : string
 
 # executeExpand expands a query, and executes the expansion. Its output
