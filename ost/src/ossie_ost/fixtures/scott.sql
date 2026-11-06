@@ -74,4 +74,25 @@ insert into scott.salgrade values
   (4, 2001, 3000),
   (5, 3001, 9999);
 
+-- PET is not part of SCOTT; it is an addition for Ossie's tests. Each pet
+-- has a unique name, an owner (a foreign key to emp; TRAMP has none), a
+-- species and an age. Most employees have no pet. JONES has two cats and a
+-- dog. SCOTT has one cat, TIGER. ADAMS has a hamster, HAMMY. FORD and SCOTT
+-- have the same salary, as do FELIX and STEALTH, and RUBY and SNOOPY.
+create table scott.pet (
+  pname varchar(10) not null primary key,
+  empno smallint references scott.emp (empno),
+  species varchar(7) not null,
+  age tinyint not null);
+
+insert into scott.pet values
+  ('FELIX', 7566, 'CAT', 5),
+  ('HAMMY', 7876, 'HAMSTER', 1),
+  ('OREO', 7566, 'CAT', 2),
+  ('RUBY', 7566, 'DOG', 7),
+  ('SNOOPY', 7499, 'DOG', 7),
+  ('STEALTH', 7902, 'CAT', 5),
+  ('TIGER', 7788, 'CAT', 3),
+  ('TRAMP', null, 'DOG', 4);
+
 set search_path = 'scott,main';

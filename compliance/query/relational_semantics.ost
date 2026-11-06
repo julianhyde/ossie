@@ -46,31 +46,14 @@
 # Data: the SCOTT schema
 #
 # The "scott" fixture has tables dept, emp, bonus and salgrade in schema
-# scott. Values are the same as the SCOTT tables in Apache Calcite.
+# scott. Values are the same as the SCOTT tables in Apache Calcite. The
+# fixture also has a table pet, which is not part of SCOTT: each pet has a
+# unique name, an owner (a foreign key to emp; TRAMP has none), a species
+# and an age.
 # ============================================================================
 
 connect("scott");
 set("doubleDigits", 2);
-
-# PET is not part of SCOTT. Each pet has a unique name, an owner (a foreign
-# key to emp; TRAMP has none), a species and an age. Most employees have no
-# pet. JONES has two cats and a dog. SCOTT has one cat, TIGER. ADAMS has a
-# hamster, HAMMY. FORD and SCOTT have the same salary, as do FELIX and
-# STEALTH, and RUBY and SNOOPY.
-create table scott.pet (
-  pname varchar(10) not null primary key,
-  empno smallint references scott.emp (empno),
-  species varchar(7) not null,
-  age tinyint not null);
-insert into scott.pet values
-  ('SNOOPY', 7499, 'DOG', 7),
-  ('HAMMY',  7876, 'HAMSTER', 1),
-  ('FELIX',  7566, 'CAT', 5),
-  ('OREO',   7566, 'CAT', 2),
-  ('RUBY',   7566, 'DOG', 7),
-  ('STEALTH', 7902, 'CAT', 5),
-  ('TIGER',  7788, 'CAT', 3),
-  ('TRAMP',  null, 'DOG', 4);
 
 
 # ============================================================================
