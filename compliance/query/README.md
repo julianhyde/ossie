@@ -172,9 +172,10 @@ Adding a case
   lowercase case ID, with a two-digit number, and a short name that says what
   the case shows, for example `a09_rollup_not_average_of_averages`. Use the ID
   prefix `A` for one relation and `B` for joins.
-- Do not change `scott/scott.sql`. Add any new metric to
-  `scott/scott_model.ossie.yaml` in the same pull request, and validate the
-  model.
+- Do not change the values in `scott/scott.sql`: the expected results of all
+  cases depend on them. A new table, such as `pet`, may be added. Add any new
+  dataset or metric to `scott/scott_model.ossie.yaml` in the same pull request,
+  and validate the model.
 - Copy `expected.sql` from the output of `reference.duckdb.sql`. Do not
   calculate it by hand.
 - Cases SHOULD NOT depend on other implementation-defined behavior. Document
@@ -189,10 +190,10 @@ has three parts: an Ossie query that uses `AGG()`, its expansion into an
 equivalent DuckDB query over the SCOTT tables, and the result of executing the
 expansion. The `ost` runner expands each Ossie query with the view expander
 ([#502](https://github.com/apache/ossie/issues/502)), executes the expansion
-in DuckDB, and checks that the expansion and the result are as expected. To
-run it:
+in DuckDB, and checks that the expansion and the result are as expected. The
+script reads the model from `scott/scott_model.ossie.yaml`, whose dataset
+`pet` only its cases use. To run it, from the root of the repository:
 
 ```sh
-cd ost
-uv run ost ../compliance/query
+uv run --project ost ost -d compliance compliance/query
 ```

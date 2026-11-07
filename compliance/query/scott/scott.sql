@@ -22,8 +22,9 @@
 -- file before a case runs. Do not change the values: the expected results of
 -- all cases depend on them.
 --
--- Values are the same as the SCOTT tables in Apache Calcite
--- (core/src/test/resources/sql/within-distinct.iq).
+-- The SCOTT tables have the same values as in
+-- https://github.com/julianhyde/scott-data-hsqldb. Our SCOTT also has a
+-- table PET.
 -- ============================================================================
 
 DROP SCHEMA IF EXISTS scott CASCADE;
@@ -80,3 +81,21 @@ INSERT INTO scott.salgrade VALUES
   (3, 1401, 2000),
   (4, 2001, 3000),
   (5, 3001, 9999);
+
+-- Pets, and their owners. TRAMP has no owner.
+CREATE TABLE scott.pet (
+  pname   VARCHAR NOT NULL PRIMARY KEY,
+  empno   INTEGER REFERENCES scott.emp (empno),
+  species VARCHAR NOT NULL,
+  age     INTEGER NOT NULL
+);
+
+INSERT INTO scott.pet VALUES
+  ('FELIX',   7566, 'CAT',     5),
+  ('HAMMY',   7876, 'HAMSTER', 1),
+  ('OREO',    7566, 'CAT',     2),
+  ('RUBY',    7566, 'DOG',     7),
+  ('SNOOPY',  7499, 'DOG',     7),
+  ('STEALTH', 7902, 'CAT',     5),
+  ('TIGER',   7788, 'CAT',     3),
+  ('TRAMP',   NULL, 'DOG',     4);

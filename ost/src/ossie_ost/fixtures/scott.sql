@@ -15,7 +15,9 @@
 -- specific language governing permissions and limitations
 -- under the License.
 
--- The SCOTT schema, loaded by connect("scott").
+-- The SCOTT schema, plus a table PET, loaded by connect("scott"). The
+-- SCOTT tables have the same values as in
+-- https://github.com/julianhyde/scott-data-hsqldb.
 
 create schema scott;
 
@@ -74,11 +76,7 @@ insert into scott.salgrade values
   (4, 2001, 3000),
   (5, 3001, 9999);
 
--- PET is not part of SCOTT; it is an addition for Ossie's tests. Each pet
--- has a unique name, an owner (a foreign key to emp; TRAMP has none), a
--- species and an age. Most employees have no pet. JONES has two cats and a
--- dog. SCOTT has one cat, TIGER. ADAMS has a hamster, HAMMY. FORD and SCOTT
--- have the same salary, as do FELIX and STEALTH, and RUBY and SNOOPY.
+-- Pets, and their owners. TRAMP has no owner.
 create table scott.pet (
   pname varchar(10) not null primary key,
   empno smallint references scott.emp (empno),

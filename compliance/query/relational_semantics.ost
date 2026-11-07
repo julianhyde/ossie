@@ -29,11 +29,11 @@
 # Part A covers the fundamentals on one relation. Part B covers joins.
 #
 # The cases are those of cases/*/query.ossie.sql (see README.md), and the
-# model is scott/scott_model.ossie.yaml, with a dataset pet added. Cases
-# B5a, B8a and B9a to B13a, which use pet, are not in cases/.
+# model is scott/scott_model.ossie.yaml. Cases B5a, B8a and B9a to B13a,
+# which use the dataset pet, are not in cases/.
 #
-# Run:
-#   cd ost; uv run ost ../compliance/query/relational_semantics.ost
+# Run, from the root of the repository:
+#   uv run --project ost ost -d compliance compliance/query
 #
 # Expected-result format:
 #   * NULL is shown as an empty cell.
@@ -49,11 +49,8 @@
 # ============================================================================
 # Data: the SCOTT schema
 #
-# The "scott" fixture has tables dept, emp, bonus and salgrade in schema
-# scott. Its values are the same as those of scott/scott.sql. The
-# fixture also has a table pet, which is not part of SCOTT: each pet has a
-# unique name, an owner (a foreign key to emp; TRAMP has none), a species
-# and an age.
+# The "scott" fixture has tables dept, emp, bonus, salgrade and pet in
+# schema scott, with the same values as scott/scott.sql.
 # ============================================================================
 
 connect("scott");
@@ -63,190 +60,11 @@ set("doubleDigits", 2);
 # ============================================================================
 # Model: Ossie semantic model over SCOTT
 #
-# The metrics are dataset-scoped (datasets[].metrics, apache/ossie#591). Each
-# dataset is exposed as a relation with the same name, and each metric is a
-# measure column of that relation (spec Section 3.4). All relations of the
-# model are in one schema with the name of the model (spec Section 11.2). The
-# Ossie queries below refer to these relations by two-part name:
-# scott_model.emp, scott_model.dept, scott_model.salgrade, and
-# scott_model.pet.
-#
-# The primary_key of each dataset is the row identity of its measures (spec
-# Section 3.2).
-#
-# The emp-to-salgrade join (e.sal BETWEEN s.losal AND s.hisal) is a range
-# join. An Ossie relationship cannot express it, so the consuming query
-# writes it (spec Section 11.3).
+# The model is scott/scott_model.ossie.yaml; its comments describe it. Each
+# dataset is a relation in schema scott_model, such as scott_model.emp.
 # ============================================================================
 
-modelInline("scott_model", {_|
-version: 0.3.0.dev0
-name: scott_model
-description: The SCOTT schema with dataset-scoped metrics
-datasets:
-  - name: emp
-    source: scott.emp
-    primary_key: [empno]
-    fields:
-      - name: empno
-        datatype: Integer
-        expression:
-          sql: empno
-      - name: ename
-        datatype: String
-        expression:
-          sql: ename
-      - name: job
-        datatype: String
-        expression:
-          sql: job
-      - name: mgr
-        datatype: Integer
-        expression:
-          sql: mgr
-      - name: hiredate
-        datatype: Date
-        expression:
-          sql: hiredate
-      - name: sal
-        datatype: Decimal
-        expression:
-          sql: sal
-      - name: comm
-        datatype: Decimal
-        expression:
-          sql: comm
-      - name: deptno
-        datatype: Integer
-        expression:
-          sql: deptno
-    metrics:
-      - name: sum_sal
-        description: Total salary
-        datatype: Decimal
-        expression:
-          sql: SUM(sal)
-      - name: avg_sal
-        description: Average salary
-        datatype: Float
-        expression:
-          sql: AVG(CAST(sal AS DOUBLE))
-      - name: emp_count
-        description: Number of employees
-        datatype: Integer
-        expression:
-          sql: COUNT(*)
-      - name: comm_count
-        description: Number of employees that have a commission
-        datatype: Integer
-        expression:
-          sql: COUNT(comm)
-      - name: sum_comm
-        description: Total commission
-        datatype: Decimal
-        expression:
-          sql: SUM(comm)
-      - name: avg_comm
-        description: Average commission, over the employees that have a commission
-        datatype: Float
-        expression:
-          sql: AVG(CAST(comm AS DOUBLE))
-
-  - name: dept
-    source: scott.dept
-    primary_key: [deptno]
-    fields:
-      - name: deptno
-        datatype: Integer
-        expression:
-          sql: deptno
-      - name: dname
-        datatype: String
-        expression:
-          sql: dname
-      - name: loc
-        datatype: String
-        expression:
-          sql: loc
-    metrics:
-      - name: dept_count
-        description: Number of departments
-        datatype: Integer
-        expression:
-          sql: COUNT(*)
-
-  - name: salgrade
-    source: scott.salgrade
-    primary_key: [grade]
-    fields:
-      - name: grade
-        datatype: Integer
-        expression:
-          sql: grade
-      - name: losal
-        datatype: Integer
-        expression:
-          sql: losal
-      - name: hisal
-        datatype: Integer
-        expression:
-          sql: hisal
-    metrics:
-      - name: grade_count
-        description: Number of salary grades
-        datatype: Integer
-        expression:
-          sql: COUNT(*)
-
-  - name: pet
-    source: scott.pet
-    primary_key: [pname]
-    fields:
-      - name: pname
-        datatype: String
-        expression:
-          sql: pname
-      - name: empno
-        datatype: Integer
-        expression:
-          sql: empno
-      - name: species
-        datatype: String
-        expression:
-          sql: species
-      - name: age
-        datatype: Integer
-        expression:
-          sql: age
-    metrics:
-      - name: pet_count
-        description: Number of pets
-        datatype: Integer
-        expression:
-          sql: COUNT(*)
-      - name: sum_age
-        description: Total age of pets
-        datatype: Integer
-        expression:
-          sql: SUM(age)
-
-relationships:
-  - name: emp_to_dept
-    from: emp
-    to: dept
-    from_columns: [deptno]
-    to_columns: [deptno]
-  - name: emp_to_manager
-    from: emp
-    to: emp
-    from_columns: [mgr]
-    to_columns: [empno]
-  - name: pet_to_owner
-    from: pet
-    to: emp
-    from_columns: [empno]
-    to_columns: [empno]
-|_});
+modelFile("scott_model", "scott/scott_model.ossie.yaml");
 
 
 # ============================================================================
