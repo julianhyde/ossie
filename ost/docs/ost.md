@@ -463,11 +463,9 @@ that are deterministic:
 : Closes the current database, and opens a new in-memory database,
   loaded with the fixture *name*:
   * `"empty"` - no tables.
-  * `"scott"` - the SCOTT schema: tables `dept`, `emp`, `bonus` and
-    `salgrade` in schema `scott`, which is on the search path, so
-    both `emp` and `scott.emp` work. It also has a table `pet`, which
-    is not part of SCOTT: each pet has a name, an owner (`empno`), a
-    `species` and an `age`.
+  * `"scott"` - the SCOTT schema: tables `dept`, `emp`, `bonus`,
+    `salgrade` and `pet` in schema `scott`, which is on the search
+    path, so both `emp` and `scott.emp` work.
 
   Each script starts as if it began with `connect("empty")`.
   `connect` also forgets the models and views that the script has
