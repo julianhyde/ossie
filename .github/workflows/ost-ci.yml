@@ -73,4 +73,8 @@ jobs:
       - name: Run .ost scripts
         working-directory: ost
         run: |
-          uv run ost tests/scripts ../compliance/query
+          uv run ost tests/scripts
+
+      - name: Run compliance scripts
+        run: |
+          uv run --project ost ost -d compliance compliance/query
