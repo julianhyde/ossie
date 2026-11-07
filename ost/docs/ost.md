@@ -548,6 +548,10 @@ that are deterministic:
   +----------+
   ```
 
+`modelFile(name, path)`
+: Defines a model *name*, as `modelInline` does, from the file
+  *path*, which is subject to the rules of *FILE ACCESS*.
+
 `modelInline(name, yaml)`
 : Defines a model *name* from *yaml*, an Ossie semantic model in
   YAML, typically written as a raw string. The model's `name` must
@@ -621,15 +625,16 @@ that are deterministic:
 ## FILE ACCESS
 
 A script may read and write files, for example with DuckDB's
-`read_csv` or `COPY`, only under the `-d` directory. A relative
-path, such as `read_csv('emp.csv')`, is looked up in the current
-directory, then in the script's directory, so a script can read a
-file beside it (if the current directory is under the `-d`
-directory). A path that contains `..`, or a file outside the `-d`
-directory, even through a symbolic link, is refused with a database
-error (see *Errors*). A script cannot lift the restriction, which
-also prevents it from attaching a database or installing an
-extension.
+`read_csv` or `COPY`, or with `modelFile`, only under the `-d`
+directory. A relative path, such as `read_csv('emp.csv')`, is looked
+up in the current directory, then in the script's directory, so a
+script can read a file beside it. (DuckDB refuses every relative path
+if the current directory is not under the `-d` directory; `modelFile`
+does not.) A path that contains `..`, or a file outside the `-d`
+directory, even through a symbolic link, is refused: by DuckDB, with
+a database error (see *Errors*), or by `modelFile`, with an error. A
+script cannot lift the restriction, which also prevents it from
+attaching a database or installing an extension.
 
 ## PYTHON API
 
