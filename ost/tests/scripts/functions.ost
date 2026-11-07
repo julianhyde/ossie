@@ -125,6 +125,30 @@ name: m
 |_});
 > error: document is missing the required property: version
 
+# modelFile defines a model from a file. A relative path is looked up in
+# the current directory, then in the script's directory. The file must be
+# under the -d directory, and its path must not contain "..".
+modelFile("mf", "functions.ossie.yaml");
+executeExpand(select agg(dept_count) as c from mf.dept);
+> {_|
+SELECT
+  COUNT(*) AS c
+FROM scott.dept
+|_} : string
++---+
+| c |
++---+
+| 4 |
++---+
+modelFile("mf2", "functions.ossie.yaml");
+> error: model is named 'mf', not 'mf2'
+modelFile("mf", "nonexistent.ossie.yaml");
+> error: ost: file not found: "nonexistent.ossie.yaml"
+modelFile("mf", "/etc/passwd");
+> error: ost: cannot access file "/etc/passwd": not under the -d directory
+modelFile("mf", "../scripts/functions.ossie.yaml");
+> error: ost: cannot access file "../scripts/functions.ossie.yaml": path contains '..'
+
 # createView defines a view.
 createView("v", select deptno, sal from scott.emp where job = 'CLERK');
 

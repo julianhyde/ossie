@@ -30,7 +30,7 @@ SCRIPTS = sorted((Path(__file__).parent / "scripts").glob("*.ost"))
 @pytest.mark.parametrize("path", SCRIPTS, ids=lambda p: p.name)
 def test_script(path):
     text = path.read_text(encoding="utf-8")
-    result = run(text, str(path))
+    result = run(text, str(path), script_dir=path.parent)
     assert result.output == text
 
 
@@ -317,6 +317,28 @@ def test_execute_expand_database_error_fails():
     [(line, message)] = result.fatal_errors
     assert line == 13 and message.startswith("database error: Binder Error")
     assert not run(result.output).passed
+
+
+def test_model_file(tmp_path, monkeypatch):
+    # modelFile finds a model beside the script, even if the current
+    # directory is outside the root, as when CI runs the compliance
+    # scripts from the root of the repository with -d compliance. It
+    # refuses a file outside the root, even through a symbolic link.
+    root = tmp_path / "root"
+    (root / "q").mkdir(parents=True)
+    model = "version: 0.2.0.dev0\nname: m\ndatasets:\n  - name: d\n    source: t\n"
+    (root / "q" / "m.yaml").write_text(model)
+    (tmp_path / "out.yaml").write_text(model)
+    (root / "q" / "link.yaml").symlink_to(tmp_path / "out.yaml")
+    monkeypatch.chdir(tmp_path)
+
+    def load(path: str) -> str:
+        text = f'modelFile("m", "{path}");\n'
+        return run(text, root=root, script_dir=root / "q").output
+
+    assert load("m.yaml") == 'modelFile("m", "m.yaml");\n'
+    assert "not under the -d directory" in load("link.yaml")
+    assert "not under the -d directory" in load("out.yaml")
 
 
 def test_custom_function():

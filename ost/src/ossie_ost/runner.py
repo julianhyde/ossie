@@ -568,6 +568,10 @@ def _model_inline(session: Session, name: str, yaml: str) -> None:
     session.catalog.add_model(name, yaml)
 
 
+def _model_file(session: Session, name: str, path: str) -> None:
+    session.catalog.add_model(name, session.read_file(path))
+
+
 def _create_view(session: Session, name: str, sql: str) -> None:
     session.catalog.add_view(name, sql)
 
@@ -610,6 +614,7 @@ BUILTINS: dict[str, Function] = {
     "createView": Function((Kind.STRING, Kind.QUERY), _create_view),
     "expand": Function((Kind.QUERY,), _expand),
     "executeExpand": Function((Kind.QUERY,), _execute_expand),
+    "modelFile": Function((Kind.STRING, Kind.STRING), _model_file),
     "modelInline": Function((Kind.STRING, Kind.STRING), _model_inline),
     "query": Function((Kind.QUERY,), lambda s, sql: s.query(sql)),
     "queryOrdered": Function((Kind.QUERY,), lambda s, sql: s.query(sql, True)),
@@ -675,6 +680,30 @@ class Session:
             self._connection.execute(f"set file_search_path = {search}")
         if sql:
             self._connection.execute(sql)
+
+    def read_file(self, path: str) -> str:
+        """Reads a file, by the rules that the database applies (see
+        *FILE ACCESS* in ``docs/ost.md``): a relative path is looked up
+        in the current directory, then in the script's directory; the
+        file must be under the root; and a path that contains ``..`` is
+        not allowed."""
+        p = Path(path)
+        if ".." in p.parts:
+            raise OstError(f"cannot access file {quote(path)}: path contains '..'")
+        if p.is_absolute():
+            candidates = [p]
+        else:
+            candidates = [Path.cwd() / p]
+            if self.script_dir is not None:
+                candidates.append(self.script_dir / p)
+        for candidate in candidates:
+            if candidate.is_file():
+                if not candidate.resolve().is_relative_to(self.root):
+                    raise OstError(
+                        f"cannot access file {quote(path)}: not under the -d directory"
+                    )
+                return candidate.read_text(encoding="utf-8")
+        raise OstError(f"file not found: {quote(path)}")
 
     def close(self) -> None:
         if self._connection is not None:
