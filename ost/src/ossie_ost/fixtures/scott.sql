@@ -58,11 +58,19 @@ insert into scott.emp values
   (7902, 'FORD', 'ANALYST', 7566, date '1981-12-03', 3000.00, null, 20),
   (7934, 'MILLER', 'CLERK', 7782, date '1982-01-23', 1300.00, null, 10);
 
+-- In Calcite's SCOTT, BONUS is empty. Ours has three bonuses, in comm, for
+-- two employees: JONES, who has three pets, has two, and KING, who has no
+-- pet, has one. Each row is distinct.
 create table scott.bonus (
   ename varchar(10),
   job varchar(9),
   sal decimal(7, 2),
   comm decimal(7, 2));
+
+insert into scott.bonus values
+  ('JONES', 'MANAGER', 2975.00, 200.00),
+  ('JONES', 'MANAGER', 2975.00, 300.00),
+  ('KING', 'PRESIDENT', 5000.00, 1000.00);
 
 create table scott.salgrade (
   grade integer,

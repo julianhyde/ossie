@@ -23,8 +23,8 @@
 -- all cases depend on them.
 --
 -- The SCOTT tables have the same values as in
--- https://github.com/julianhyde/scott-data-hsqldb. Our SCOTT also has a
--- table PET.
+-- https://github.com/julianhyde/scott-data-hsqldb, except that BONUS, which
+-- is empty there, has three rows. Our SCOTT also has a table PET.
 -- ============================================================================
 
 DROP SCHEMA IF EXISTS scott CASCADE;
@@ -68,6 +68,20 @@ INSERT INTO scott.emp VALUES
   (7900, 'JAMES',  'CLERK',     7698, DATE '1981-12-03',  950.00,    NULL, 30),
   (7902, 'FORD',   'ANALYST',   7566, DATE '1981-12-03', 3000.00,    NULL, 20),
   (7934, 'MILLER', 'CLERK',     7782, DATE '1982-01-23', 1300.00,    NULL, 10);
+
+-- Bonuses, in comm. JONES, who has three pets, has two bonuses, and KING,
+-- who has no pet, has one. The table has no key, but each row is distinct.
+CREATE TABLE scott.bonus (
+  ename VARCHAR NOT NULL,
+  job   VARCHAR NOT NULL,
+  sal   DECIMAL(7, 2) NOT NULL,
+  comm  DECIMAL(7, 2) NOT NULL
+);
+
+INSERT INTO scott.bonus VALUES
+  ('JONES', 'MANAGER',   2975.00,  200.00),
+  ('JONES', 'MANAGER',   2975.00,  300.00),
+  ('KING',  'PRESIDENT', 5000.00, 1000.00);
 
 CREATE TABLE scott.salgrade (
   grade INTEGER NOT NULL PRIMARY KEY,
