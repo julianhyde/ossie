@@ -41,6 +41,7 @@ Layout
 | `cases/<case>/query.ossie.sql` | Ossie query under test |
 | `cases/<case>/expected.sql` | Expected result, as standard SQL over literals |
 | `cases/<case>/reference.duckdb.sql` | Non-normative DuckDB query that derives the expected result |
+| `<case>.ost` | The case as an `ost` script (see "Running the cases with ost") |
 
 The file name suffix gives the SQL dialect: `.ossie.sql` for Ossie SQL,
 `.duckdb.sql` for DuckDB SQL, and `.sql` for standard SQL (ISO/IEC 9075).
@@ -184,15 +185,28 @@ Adding a case
 Running the cases with ost
 --------------------------
 
-[`relational_semantics.ost`](relational_semantics.ost) is the same cases as an
-`.ost` script ([#501](https://github.com/apache/ossie/issues/501)). Each case
-has three parts: an Ossie query that uses `AGG()`, its expansion into an
-equivalent DuckDB query over the SCOTT tables, and the result of executing the
-expansion. The `ost` runner expands each Ossie query with the view expander
+Each case is also an `.ost` script
+([#501](https://github.com/apache/ossie/issues/501)) in this directory, named
+after the case's directory: `cases/b04_one_side_counted_once` is
+[`b04_one_side_counted_once.ost`](b04_one_side_counted_once.ost). A script has
+the comment and query of the case's `query.ossie.sql`, the query's expansion
+into an equivalent DuckDB query over the SCOTT tables, and the result of
+executing the expansion, which is that of `expected.sql`. The `ost` runner
+expands each Ossie query with the view expander
 ([#502](https://github.com/apache/ossie/issues/502)), executes the expansion
-in DuckDB, and checks that the expansion and the result are as expected. The
-script reads the model from `scott/scott_model.ossie.yaml`, whose dataset
-`pet` only its cases use. To run it, from the root of the repository:
+in DuckDB, and checks that the expansion and the result are as expected.
+
+Some scripts have cases that are not in `cases/`, because they use the
+datasets `pet` and `bonus` of `scott/scott_model.ossie.yaml`: B5a is in
+`b05_manager_counted_once.ost`, B8a and B8b in
+`b08_many_to_many_chasm_trap.ost`, and each of B9a to B13a in the script of
+B9 to B13. The scripts of B9 to B13 and of B14 to B17 also start with a
+comment that describes their group.
+
+The scripts are in this directory, not in `cases/`, because `ost` does not
+allow `..` in a file path, and each script reads its model from
+`scott/scott_model.ossie.yaml`. To run the scripts, from the root of the
+repository:
 
 ```sh
 uv run --project ost ost -d compliance compliance/query
