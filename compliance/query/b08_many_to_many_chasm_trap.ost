@@ -16,16 +16,16 @@
 # under the License.
 
 # ============================================================================
-# Compliance queries B8, B8a, B8b: cases/b08_many_to_many_chasm_trap
+# Compliance queries B8, B8a, B8b
 #
 # A test case for core-spec/relational_semantics.md over the classic SCOTT
-# schema, as an ost script (apache/ossie#501). The comment and the Ossie
-# query of case B8 are those of cases/b08_many_to_many_chasm_trap/query.ossie.sql.
-# executeExpand expands the query with the view expander (apache/ossie#502)
-# into an equivalent DuckDB query over the base tables, as
-# reference.duckdb.sql is, and its result is that of expected.sql.
+# schema, as an ost script (apache/ossie#501). The argument to
+# executeExpand is the Ossie query under test. executeExpand expands it
+# with the view expander (apache/ossie#502) into an equivalent DuckDB
+# query over the base tables, and executes the expansion. The table that
+# follows is the expected result. README.md gives the rules for cases.
 #
-# Cases B8a and B8b are not in cases/; they use the datasets pet and bonus.
+# Case B8a uses the dataset pet, and B8b the datasets bonus and pet.
 #
 # Part B: joins. A join can repeat a row of a measure's source (fan-out).
 # An outer join can also add NULL-padded rows that come from no source row.

@@ -16,14 +16,14 @@
 # under the License.
 
 # ============================================================================
-# Compliance query B17: cases/b17_left_join_empty_group
+# Compliance query B17
 #
 # A test case for core-spec/relational_semantics.md over the classic SCOTT
-# schema, as an ost script (apache/ossie#501). The comment and the Ossie
-# query of case B17 are those of cases/b17_left_join_empty_group/query.ossie.sql.
-# executeExpand expands the query with the view expander (apache/ossie#502)
-# into an equivalent DuckDB query over the base tables, as
-# reference.duckdb.sql is, and its result is that of expected.sql.
+# schema, as an ost script (apache/ossie#501). The argument to
+# executeExpand is the Ossie query under test. executeExpand expands it
+# with the view expander (apache/ossie#502) into an equivalent DuckDB
+# query over the base tables, and executes the expansion. The table that
+# follows is the expected result. README.md gives the rules for cases.
 #
 # Part B: joins. A join can repeat a row of a measure's source (fan-out).
 # An outer join can also add NULL-padded rows that come from no source row.

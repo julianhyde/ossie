@@ -16,14 +16,14 @@
 # under the License.
 
 # ============================================================================
-# Compliance query A10: cases/a10_cte_passes_measures_through
+# Compliance query A10
 #
 # A test case for core-spec/relational_semantics.md over the classic SCOTT
-# schema, as an ost script (apache/ossie#501). The comment and the Ossie
-# query of case A10 are those of cases/a10_cte_passes_measures_through/query.ossie.sql.
-# executeExpand expands the query with the view expander (apache/ossie#502)
-# into an equivalent DuckDB query over the base tables, as
-# reference.duckdb.sql is, and its result is that of expected.sql.
+# schema, as an ost script (apache/ossie#501). The argument to
+# executeExpand is the Ossie query under test. executeExpand expands it
+# with the view expander (apache/ossie#502) into an equivalent DuckDB
+# query over the base tables, and executes the expansion. The table that
+# follows is the expected result. README.md gives the rules for cases.
 #
 # Part A: fundamentals (one relation). On one relation, no join repeats
 # rows, so AGG(m) gives the same result as the metric's aggregate over the
